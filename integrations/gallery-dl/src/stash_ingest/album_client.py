@@ -82,8 +82,7 @@ def validate_publication(value, post):
         identifier(value["gallery_uuid"])
     if changed and not value.get("gallery_uuid"):
         raise InvalidData("Changed gallery identity is missing")
-    if ((action == "disabled" and any(value[key] for key in ("selected", "review", "unavailable")))
-            or (action in ("disabled", "ineligible") and changed)):
+    if action in ("disabled", "ineligible") and any(value[key] for key in ("selected", "review", "unavailable", "added", "removed")):
         raise InvalidData("No-op album claims a mutation")
     return value
 

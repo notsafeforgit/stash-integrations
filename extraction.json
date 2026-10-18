@@ -9,5 +9,7 @@
     "scripts/backfill_catalog_associations.py",
     "scripts/split_worker_profiles.py"
   ],
-  "fixtures": "pkg/ contains versioned test fixtures only; the canonical schema and APIs remain in Stash."
+  "fixtures": "pkg/ contains versioned test fixtures only; the canonical schema and APIs remain in Stash.",
+  "deployed_client_source_revision": "faa904fa9648b458aa192a22710daf5033cf28b0",
+  "release_note": "This release preserves the deployed worker module bytes. New installations and core contract tests use v0.2.0; existing installations may pin this baseline until their next explicit worker-policy upgrade."
 }
