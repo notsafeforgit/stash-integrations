@@ -222,7 +222,7 @@ Enable with `systemctl --user daemon-reload` and
 get a second instance from its timer. This drains admitted work; it does **not**
 subscribe to daily checks or fetch extra metadata. For routine monitoring,
 per-site parallel workers, request budgets and n8n, use the
-[source-run guide](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-source-runs.md) and
+[source-run guide](https://github.com/notsafeforgit/stash/blob/develop/docs/native-source-runs.md) and
 [worker reference](README.md#automatic-source-dispatch).
 
 Back up the complete setup directory, local gallery-dl config/credential files

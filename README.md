@@ -25,7 +25,7 @@ idempotent receipts. FileFlows can stay in its own container and submit complete
 files through its adapter. No Docker/Podman socket is needed inside Stash.
 
 The API and data-model documentation remains in the
-[Stash documentation](https://github.com/notsafeforgit/stash/tree/v3-rewrite/docs).
+[Stash documentation](https://github.com/notsafeforgit/stash/tree/develop/docs).
 The application repository retains real-server compatibility tests against a
 pinned release of these clients. Python unit tests and package releases live here.
 

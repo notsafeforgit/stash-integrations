@@ -63,6 +63,6 @@ backup script. An explicit disposable-dataset rehearsal is available in
 `tests/zfs_media_probe.py`; it requires existing host ZFS permissions and is not
 part of automatic tests.
 
-See the [format and commands](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-archive-format.md) for installation,
+See the [format and commands](https://github.com/notsafeforgit/stash/blob/develop/docs/native-archive-format.md) for installation,
 coverage, storage budgets, manifest rules and the remaining production backup
 coordination gates. Run `make setup test-archive` from the stash-integrations root.

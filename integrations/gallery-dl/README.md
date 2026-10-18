@@ -10,12 +10,12 @@ historical migration tools.
 This integration is optional. Enable **Settings → Services → Source tracking**
 and restart Stash before registering producers or running workers. It defaults
 to off; host/n8n schedules and website access still require their own setup.
-See [optional integrations](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/optional-integrations.md). A disabled
+See [optional integrations](https://github.com/notsafeforgit/stash/blob/develop/docs/optional-integrations.md). A disabled
 server returns `source_tracking_disabled` without acknowledging queued events.
 
 This package implements durable delivery and a gallery-dl download adapter.
 Host and n8n workers scrape directly into the native archive through durable
-source runs and delivery journals. See [scrape requests and checkpoints](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-source-runs.md)
+source runs and delivery journals. See [scrape requests and checkpoints](https://github.com/notsafeforgit/stash/blob/develop/docs/native-source-runs.md)
 for shared request budgets, routine/initial/recovery modes, pagination and the
 metadata retained without separate per-post enrichment.
 
@@ -47,7 +47,7 @@ file when restoring the producer environment.
 ## Authentication boundary
 
 The package also provides `stash-intake-folders` for
-[scheduled local-file discovery](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-manual-intake.md#scheduled-folder-discovery).
+[scheduled local-file discovery](https://github.com/notsafeforgit/stash/blob/develop/docs/native-manual-intake.md#scheduled-folder-discovery).
 It uses application authentication and native collection policies, retains exact
 admissions and directory cursors in one SQLite journal, and caps pending work
 across invocations. Service/timer templates are packaged but inactive; production
@@ -83,14 +83,14 @@ database lineage and a symlink in place of the database.
 Use `stash_ingest.retention.retain(metadata)` on a copy, construct a supported
 event envelope, serialize it with `encoding.encode`, and call `Outbox.enqueue`
 before reporting the evidence captured. Event fields are documented in
-[native ingestion](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-ingestion.md). The outbox validates the
+[native ingestion](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md). The outbox validates the
 envelope and requires source data to already satisfy `gallery-dl-retained-v1`.
 The envelope has no plugin-settings field. Retention removes known secret-bearing
 fields and private runtime handles; unsupported public runtime objects are
 rejected. Server source-identity and domain checks remain authoritative.
 
 When the configured extractor already yields a publisher's profile/bio, the
-native server can [append its links to the linked performer](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-ingestion.md#performer-links-from-captured-profiles).
+native server can [append its links to the linked performer](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md#performer-links-from-captured-profiles).
 The server remembers URLs removed in Stash so new captures do not restore them.
 This requires native schema 1000097; it needs no producer setting or additional
 gallery-dl profile fetching and applies equally to host and n8n delivery.
@@ -1210,7 +1210,7 @@ first phase's saved binding, preview or receipt. Unknown schema shapes are
 rejected, and uncertain identities remain review records. The imported catalog
 collections are disabled and have no scrape target/root binding. These commands
 do not import individual catalog bodies or activate workers. See the
-[native registry contracts](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-source-identity.md#importing-the-performer-registry)
+[native registry contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-source-identity.md#importing-the-performer-registry)
 for performer-import preparation, limits, ownership rules and inspection APIs.
 
 ### Individual catalog snapshots
@@ -1429,7 +1429,7 @@ Inspect `/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/file-history-import/rec
 for summaries and append `/ORDINAL` for the retained source row. Follow
 `history_uuid` to `/api/v3/archive/file-history/UUID` for the native event.
 Observation and claim history endpoints are documented in
-[source file history](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#source-file-history).
+[source file history](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#source-file-history).
 Exit codes remain 0 (mapped), 2 (review), and 1 (failure/unavailable response).
 `imported:false` means final migration reconciliation and other families remain
 outstanding; a mapped history event does not mean its edits were applied.
@@ -1506,7 +1506,7 @@ review outcomes, and exit 1 means failure or an unavailable response. Inspect
 `/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/translation-import/records`
 for bounded summaries, or append `/ORDINAL` for original values and native
 references. Post evidence and shared results also have application read APIs;
-see [retained translations](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#retained-source-translations).
+see [retained translations](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#retained-source-translations).
 Completion remains `imported:false` pending the remaining catalog migration.
 
 Map historical enrichment receipts with native schema 1000057 after the evidence
@@ -1528,7 +1528,7 @@ Original completion times and unresolved-child counts stay intact. Importing a
 historical receipt does not schedule a website request, invent a native worker
 attempt, or assert that all child metadata was retrieved. Queue/cooldown import
 and activation remain separate; `imported:false` still means the entire catalog
-migration is not complete. See [historical enrichment receipts](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#historical-enrichment-receipts).
+migration is not complete. See [historical enrichment receipts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#historical-enrichment-receipts).
 
 Retain historical metadata cleanup with native schema 1000080 after the evidence
 pass:
@@ -1551,7 +1551,7 @@ prune. Importing it preserves the original catalog scope and timestamp without
 deleting media, removing recreated posts or cancelling native work. The intents
 remain held; execution and reviewed disposition require separate native retention
 work. `imported:false` still means the whole catalog migration is incomplete.
-See [historical metadata cleanup](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#historical-metadata-cleanup).
+See [historical metadata cleanup](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#historical-metadata-cleanup).
 
 ## Frozen automation input
 
@@ -1705,7 +1705,7 @@ authorization. Exit codes are 0 for preparation/show or complete activation,
 1 for invalid input/transport failure, 2 for conflicting batches requiring
 review, and 3 for work not yet activated. Saved plans contain source identifiers
 and schedules, never the application key. Redirected, malformed and oversized
-responses are rejected. See [activation API contracts](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#reviewed-translation-activation).
+responses are rejected. See [activation API contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewed-translation-activation).
 
 ### Frozen enrichment history and work
 
@@ -1736,7 +1736,7 @@ alias. Existing native choices are preserved.
 Inspect application API progress and mapped/source records under
 `/api/v3/archive/automation-snapshots/SNAPSHOT_UUID/enrichment-import`, including
 `/records?after=ORDINAL&limit=100` and `/records/ORDINAL`. The
-[schema contract](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#frozen-enrichment-work) explains
+[schema contract](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#frozen-enrichment-work) explains
 historical completion bases and retained URL evidence. This command does not
 replace coordinated cutover inputs, review resolution or reviewed activation.
 
@@ -1775,7 +1775,7 @@ Inspect `/api/v3/archive/automation-snapshots/SNAPSHOT_UUID/discovery-import`,
 `/records?after=ORDINAL&limit=100`, and `/records/ORDINAL`. Compact summaries link
 native accounts, posts and collections where validated; selected-record details
 read original values from the retained snapshot rather than another payload
-copy. See the [schema contract](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#frozen-discovery-and-maintenance-history).
+copy. See the [schema contract](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#frozen-discovery-and-maintenance-history).
 Use the separate reviewed activation command below to bind selected held targets.
 Importing this history never activates them automatically.
 
@@ -1869,7 +1869,7 @@ Use the same prepare/show/apply/status commands and a new saved plan file. Furth
 target batches reuse the same recovery listing. A running producer must finish
 or be recovered before Apply; queued predecessor work is cancelled atomically.
 Earlier pages and candidate evidence remain reviewable and can still block a
-conflicting match. See [recovery semantics](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-ingestion.md#recovering-a-search-with-missing-historical-batches).
+conflicting match. See [recovery semantics](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md#recovering-a-search-with-missing-historical-batches).
 
 ### Legacy enrichment checkpoints
 
@@ -1948,7 +1948,7 @@ collections, forgotten posts, changed targets and occupied replacements make
 The client supports up to one million candidates in pages of 100. Saved pages
 allow long URLs and escaped JSON without loading the entire library into memory.
 It uses `STASH_API_KEY` or `--api-key-env` and requires application authorization.
-See [activation API contracts](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#reviewed-enrichment-activation).
+See [activation API contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewed-enrichment-activation).
 
 ### Reviewing pending work after editing a collection
 
@@ -1997,7 +1997,7 @@ reuse the same plan and digest. `rebound` confirms this transfer only;
 for preparation/show/candidates or a committed transfer, 1 for invalid input or
 transport failure, 2 for a conflict, and 3 for a saved transfer awaiting Apply.
 Authentication uses `STASH_API_KEY` or `--api-key-env`, never a key inside the plan.
-See [collection review API contracts](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#reviewing-unstarted-enrichment-after-a-collection-change).
+See [collection review API contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewing-unstarted-enrichment-after-a-collection-change).
 
 ## Historical post-to-media links
 
@@ -2039,7 +2039,7 @@ Exit codes are 0 for preparation/show or processed work without review, 1 for
 input/transport failures, 2 for review items/conflicts, and 3 for unsubmitted
 requests. `processed` concerns the saved matching pass; `needs_review` and the
 outcome counts retain unresolved candidates. Matching does not apply metadata
-policies or enable scrapers. See the [native contract](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-ingestion.md#historical-post-to-media-matching).
+policies or enable scrapers. See the [native contract](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md#historical-post-to-media-matching).
 
 ## Fclones-backed file deduplication
 
@@ -2050,7 +2050,7 @@ allows downloads and backups to continue; each candidate's preview/recovery/appl
 holds the existing backup lock plus every inventoried native worker publication
 barrier, releasing them between pairs. Stash
 verifies full bytes and preserves provenance; different media owners remain
-review cases. See the [client guide](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-file-deduplication.md#native-host-client)
+review cases. See the [client guide](https://github.com/notsafeforgit/stash/blob/develop/docs/native-file-deduplication.md#native-host-client)
 for arguments, persistent state and exit codes.
 `stash-dedupe-host` supplies the scheduled/pre-backup configuration,
 completion cooldown and private key-file handling. Its compact SQLite journal
@@ -2079,7 +2079,7 @@ infers a complete list or total count. Existing source selections remain intact.
 With this policy, `--all-selected` discovers historical filename candidates,
 including posts that have no selection yet. Use `--posts-file` for a bounded
 explicit JSON array of post UUIDs. No new captures or duplicate payloads are
-created. See [recovery semantics](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-source-albums.md#recovering-historical-twitter-albums).
+created. See [recovery semantics](https://github.com/notsafeforgit/stash/blob/develop/docs/native-source-albums.md#recovering-historical-twitter-albums).
 
 ```sh
 stash-backfill-source-albums prepare --endpoint STASH_ORIGIN \
@@ -2674,7 +2674,7 @@ helper neither applies field mappings nor mutates selected scene/image metadata.
 permitted collection discovery, unadmitted target discovery, revision-pinned admission,
 job/target inspection, claim/renew, source reservations, checkpoint save/read, verified publication
 and controlled failure acknowledgements. See the
-[HTTP contract](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-ingestion.md#producer-enrichment-api).
+[HTTP contract](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md#producer-enrichment-api).
 Checkpoint bodies remain JSON objects. Requests bind the owner/fence; server
 credentials supply the producer identity. Checkpoint reads are bounded to
 32 MiB plus 4 KiB and verify the body digest, counts, URL and extractor version.
@@ -2718,7 +2718,7 @@ review of a legacy checkpoint, `EnrichmentClient.admit_handoff(handoff_uuid,
 plan_sha256, policy_sha256, extractor_version)` consumes that exact review and
 returns its native job. Exact retry returns the same job after a lost response.
 The application review/seed API is documented in
-[native schema](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-schema.md#reviewing-an-exact-checkpoint-handoff).
+[native schema](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewing-an-exact-checkpoint-handoff).
 
 The executor automatically resumes the job's verified retained seed when no
 checkpoint exists. Its prefix keeps original capture UUIDs and null historical
@@ -3021,7 +3021,7 @@ is separate from binding the page to an authorized job or accepting a post match
 
 This collector does not submit a job, advance a stored cursor, accept a source
 post match or certify an account scan as completed. Native discovery storage and
-the [scoped worker HTTP protocol](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-ingestion.md#account-listing-discovery)
+the [scoped worker HTTP protocol](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md#account-listing-discovery)
 now retain one page per owned job, releasing the service before the next page.
 The protocol advertises `discovery_protocol: 1`,
 `discovery_source_pacing_protocol: 1` and `discovery_dispatch_protocol: 1`.

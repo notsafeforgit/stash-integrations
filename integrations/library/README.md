@@ -4,7 +4,7 @@ These stdlib-only Python clients replace the audited host scripts
 `~/bin/tag_stash_collections.py`, `~/bin/stash_autotag_with_aliases.py`,
 `~/bin/update_image_titles_stash_performer.py` and `~/bin/stash_scan_and_generate.py`
 when the native Stash API is activated. They use canonical filter ASTs and the
-[native bulk result](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-bulk-updates.md). They are optional, independently installed helpers.
+[native bulk result](https://github.com/notsafeforgit/stash/blob/develop/docs/native-bulk-updates.md). They are optional, independently installed helpers.
 
 Set `STASH_GRAPHQL_URL` (default `http://localhost:8009/graphql`) and supply the
 existing Stash application key through `STASH_API_KEY` when authentication is
