@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stash-library"
+version = "0.2.0"
+description = "Optional Stash library tagging, title and scan API clients"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+stash-tag-collections = "tag_stash_collections:main"
+stash-autotag = "stash_autotag_with_aliases:main"
+stash-update-image-titles = "update_image_titles_stash_performer:main"
+stash-scan = "stash_scan_and_generate:main"
+
+[tool.setuptools]
+py-modules = ["stash_library", "tag_stash_collections", "stash_autotag_with_aliases", "update_image_titles_stash_performer", "stash_scan_and_generate"]

@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/notsafeforgit/stash",
+  "revision": "a3f2c767e03329ceaef02110fa4e5e06277a892a",
+  "paths": [
+    "integrations/gallery-dl/",
+    "integrations/archive/",
+    "integrations/library/",
+    "scripts/verify_producer_install.py",
+    "scripts/backfill_catalog_associations.py",
+    "scripts/split_worker_profiles.py"
+  ],
+  "fixtures": "pkg/ contains versioned test fixtures only; the canonical schema and APIs remain in Stash."
+}
