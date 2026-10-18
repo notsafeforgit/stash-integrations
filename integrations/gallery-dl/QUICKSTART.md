@@ -41,7 +41,7 @@ you intend to use, not the separate `sqlite3` command:
 python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'
 ```
 
-From a checkout of this fork:
+From a checkout of [stash-integrations](https://github.com/notsafeforgit/stash-integrations):
 
 ```sh
 uv tool install --python python3 './integrations/gallery-dl[gallery]'

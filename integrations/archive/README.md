@@ -65,4 +65,4 @@ part of automatic tests.
 
 See the [format and commands](https://github.com/notsafeforgit/stash/blob/v3-rewrite/docs/native-archive-format.md) for installation,
 coverage, storage budgets, manifest rules and the remaining production backup
-coordination gates. Run `make validate-archive` from the repository root.
+coordination gates. Run `make setup test-archive` from the stash-integrations root.

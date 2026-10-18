@@ -26,8 +26,8 @@ in the runner's environment when integrating it; do not replace a live wrapper
 with this CLI. The CLI can queue source requests, drain captured events and
 execute one claimed download attempt using an explicitly reviewed local profile.
 The optional `[gallery]` extra pins the gallery-dl source revision and yt-dlp
-version used to verify downloader integration. Run `make pre-producer` to install
-that test runtime into `.local/native-producer`, independently of live workers.
+version used to verify downloader integration. Run `make setup` from the stash-integrations root to install
+that test runtime into `.venv`, independently of live workers.
 The setup target also checks installed modules against current sources without
 workspace imports. Wheel builds remove obsolete modules from reused `build/lib`
 output; they must not alter a worker's policy fingerprint. Use Python `-I` for
@@ -3164,9 +3164,9 @@ it during rollback. Native Stash schema 1000071 is unchanged.
 
 ## Validation
 
-After `make pre-producer`, `make validate-producer` runs delivery and actual
+After `make setup`, `make test-producer` runs delivery and actual
 gallery-dl runtime tests, including the same retention corpus used by Go.
-`PRODUCER_PYTHON` can select another environment with the pinned dependencies.
+The Makefile uses the isolated `.venv` environment with the pinned dependencies.
 Tests cover concurrent delivery, subprocess death,
 receipt replay, token rotation, dependency ordering, capacity, partial batches,
 redirect rejection, disabled file processing, download/skip/postprocessor paths,
@@ -3201,8 +3201,10 @@ same for a whole journal, then checks paginated summaries and every original
 record through the real HTTP inspection routes. Migration fixtures preserve
 the seven families, old extractor columns, timestamps and embedded JSON strings;
 unknown inputs and conflicting snapshot identities cannot partially publish.
-These checks are included in `make validate-fork`
-and the build workflow. No production endpoint or source website is contacted.
+The Python tests run in this repository's independent release workflow. The
+Go/HTTP checks remain in the Stash repository's explicit `make test-clients`
+suite, pinned by `integration-clients.json`; core CI selects them for contract
+changes. No production endpoint or source website is contacted.
 `TestPythonDiscoveryHTTPPreservesLargePagesAndLostAcknowledgements` also runs the
 supported discovery client and shared job lease against the native server,
 preserving a page larger than 4 MiB, exact source numbers and compact metadata.
