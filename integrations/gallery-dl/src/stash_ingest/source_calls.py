@@ -277,17 +277,21 @@ def resolve_once(calls, client, *, owner=None):
     delivery = calls.claim(owner or str(uuid.uuid4()))
     if delivery is None:
         return {"state": "idle"}
+    counts = {"queued": 0, "review": 0}
     try:
         result = lookup_collections(client, [item["target_url"] for item in delivery.targets], delivery.definition["root_uuid"])
-        counts = {"queued": 0, "review": 0}
         for item, match in zip(delivery.targets, result["targets"], strict=True):
             counts[calls.bind(delivery, item, match)] += 1
         return {"state": "review" if counts["review"] else "queued", "call_uuid": delivery.call_uuid, "counts": counts}
     except LeaseLost:
         return {"state": "lease_lost", "call_uuid": delivery.call_uuid}
     except Capacity:
-        calls.fail(delivery, "caller_submission_capacity")
-        raise
+        # Successfully bound targets keep their original tickets. Release only
+        # this lease's remaining targets with backoff, then let the dispatcher
+        # submit and execute existing work so admission capacity can recover.
+        changed = calls.fail(delivery, "caller_submission_capacity")
+        return {"state": "pending" if changed else "lease_lost", "call_uuid": delivery.call_uuid,
+                "error_code": "caller_submission_capacity", "counts": counts}
     except (Unavailable, InvalidData) as error:
         code, review, delay = "invalid_collection_binding", True, 0
         if isinstance(error, Unavailable):

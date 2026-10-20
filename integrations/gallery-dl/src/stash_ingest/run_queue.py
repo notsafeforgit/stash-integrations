@@ -52,6 +52,21 @@ class RunQueue:
         self.max_groups, self.max_windows = max_groups, max_windows
         self.max_tickets = max_tickets
 
+    def active_configurations(self):
+        # Receipts retain their configuration identity indefinitely. Admission
+        # capacity bounds work still awaiting a native receipt, not that history.
+        return self.db.execute("""SELECT count(*) FROM (
+            SELECT uuid FROM run_intents WHERE window_count>0
+            UNION SELECT intent_uuid FROM run_requests WHERE state!='admitted'
+        )""").fetchone()[0]
+
+    def active_tickets(self):
+        return self.db.execute("""SELECT count(*) FROM (
+            SELECT uuid FROM run_intent_tickets WHERE unassigned_count>0
+            UNION SELECT link.ticket_uuid FROM run_ticket_requests link
+                JOIN run_requests r ON r.request_uuid=link.request_uuid WHERE r.state!='admitted'
+        )""").fetchone()[0]
+
     def _save_windows(self, intent, pending):
         if len(pending) > self.max_windows:
             raise Capacity("Too many disjoint source windows; existing requests remain queued")
@@ -82,7 +97,7 @@ class RunQueue:
                 if previous["sha256"] != ticket_digest:
                     raise Conflict("Caller ticket already identifies different source work")
                 return previous["intent_uuid"]
-            if self.db.execute("SELECT count(*) FROM run_intent_tickets").fetchone()[0] >= self.max_tickets:
+            if self.active_tickets() >= self.max_tickets:
                 raise Capacity("Caller ticket capacity exhausted; existing receipts are retained")
         group = self.db.execute("SELECT * FROM run_intents WHERE config_sha256=?", (key,)).fetchone()
         if group:
@@ -90,13 +105,17 @@ class RunQueue:
                 raise Conflict("Source request configuration digest conflicts")
             intent, pending = group["uuid"], decode(group["windows"], 16384)
         else:
-            if self.db.execute("SELECT count(*) FROM run_intents").fetchone()[0] >= self.max_groups:
-                raise Capacity("Offline source request configuration capacity exhausted")
             intent, pending, now = str(uuid.uuid4()), [], self.box.clock()
             self.db.execute("""INSERT INTO run_intents(uuid,config_sha256,template,operation,windows,
                 window_count,latest_until,created_at,updated_at) VALUES(?,?,?,?,?,0,'',?,?)""",
                 (intent, key, body, spec["operation"], b"[]", now, now))
         frozen = self.db.execute("SELECT * FROM run_requests WHERE intent_uuid=? AND state!='admitted'", (intent,)).fetchone()
+        # Check both a new configuration and reactivation of retained history.
+        # Existing active groups can still coalesce while the queue is full.
+        # enqueue_in_transaction always holds BEGIN IMMEDIATE, so concurrent
+        # producers cannot both consume the final slot.
+        if not pending and frozen is None and self.active_configurations() >= self.max_groups:
+            raise Capacity("Offline source request configuration capacity exhausted")
         pending = windows.union(pending, [spec["window"]])
         if frozen:
             pending = windows.subtract(pending, [decode(frozen["window"], 8192)])
@@ -207,6 +226,8 @@ class RunQueue:
         if groups["oldest"] is not None:
             ages.append(groups["oldest"])
         return {"counts": counts, "configurations": groups["configurations"],
+                "active_configurations": self.active_configurations(), "configuration_limit": self.max_groups,
+                "active_caller_tickets": self.active_tickets(), "caller_ticket_limit": self.max_tickets,
                 "caller_tickets": self.db.execute("SELECT count(*) FROM run_intent_tickets").fetchone()[0],
                 "pending_windows": groups["pending_windows"],
                 "oldest_queued_seconds": max(0, self.box.clock() - min(ages)) if ages else None,

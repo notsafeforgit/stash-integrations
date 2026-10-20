@@ -184,6 +184,61 @@ class RunQueueTests(unittest.TestCase):
         self.queue.admit(current, admission(current.body))
         self.assertIsNone(self.box.db.execute("SELECT body FROM run_requests").fetchone()[0])
 
+    def test_capacity_counts_outstanding_work_and_preserves_receipts_across_reopen(self):
+        limited = RunQueue(self.box, max_groups=1, max_tickets=1)
+        first_ticket, second_ticket = str(uuid.uuid4()), str(uuid.uuid4())
+        first = limited.enqueue(request(), ticket_uuid=first_ticket)
+        frozen = limited.claim(str(uuid.uuid4()))
+        for review in (False, True):
+            limited.fail(frozen, "network_unavailable", review=review)
+            with self.assertRaises(Capacity):
+                limited.enqueue(request(policy_sha256="b" * 64))
+            with self.assertRaises(Capacity):
+                limited.enqueue(request(), ticket_uuid=second_ticket)
+            self.assertEqual(limited.active_configurations(), 1)
+            self.assertEqual(limited.active_tickets(), 1)
+            if review:
+                limited.retry(frozen.request_uuid)
+            self.now[0] += 120
+            frozen = limited.claim(str(uuid.uuid4()))
+        limited.admit(frozen, admission(frozen.body))
+        history = limited.history(first)
+        ticket = limited.ticket(first_ticket)
+        self.box.close()
+        self.box = self.open()
+        limited = RunQueue(self.box, max_groups=1, max_tickets=1)
+        second = limited.enqueue(request(policy_sha256="b" * 64), ticket_uuid=second_ticket)
+        self.assertNotEqual(first, second)
+        self.assertEqual(limited.status()["configurations"], 2)
+        self.assertEqual(limited.active_configurations(), 1)
+        self.assertEqual(limited.active_tickets(), 1)
+        self.assertEqual(limited.enqueue(request(), ticket_uuid=first_ticket), first)
+        with self.assertRaises(Capacity):
+            limited.enqueue(request())
+        self.assertEqual(limited.history(first), history)
+        self.assertEqual(limited.ticket(first_ticket), ticket)
+        self.assertEqual(limited.enqueue(request(10, 25, policy_sha256="b" * 64)), second)
+        frozen = limited.claim(str(uuid.uuid4()))
+        limited.admit(frozen, admission(frozen.body))
+        self.assertEqual(limited.enqueue(request()), first)
+        self.assertEqual(limited.active_tickets(), 0)
+        self.assertEqual(limited.history(first), history)
+
+    def test_concurrent_new_configurations_cannot_overfill_the_last_slot(self):
+        def enqueue(index):
+            box = self.open()
+            try:
+                return RunQueue(box, max_groups=1).enqueue(request(collection_revision=index + 1))
+            except Capacity:
+                return None
+            finally:
+                box.close()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(enqueue, range(4)))
+        self.assertEqual(sum(result is not None for result in results), 1)
+        self.assertEqual(self.queue.active_configurations(), 1)
+        self.assertEqual(self.queue.status()["configurations"], 1)
+
     def test_capacity_or_invalid_specs_roll_back_without_losing_old_windows(self):
         limited = RunQueue(self.box, max_groups=1, max_windows=2)
         intent = limited.enqueue(request(1, 2))

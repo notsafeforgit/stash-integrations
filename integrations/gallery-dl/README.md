@@ -753,6 +753,20 @@ when the response says the server run is queued or deferred. It never means the
 scrape or media ingestion completed. Inspect the native run's current status;
 claim a live source lease before starting extraction. An outage only queues work.
 
+Admission capacity bounds configurations and caller tickets still waiting for
+native admission: pending windows, pending/in-flight/review requests, and tickets
+with unassigned windows or unadmitted assignments. Retained configurations,
+tickets and admission receipts do not consume those slots. Reusing an idle
+configuration needs a free slot; coalescing into an active one and replaying an
+existing ticket remain possible at capacity. Receipt history remains durable, so
+these limits do not bound total disk usage. Status reports active usage and limits
+separately from retained totals.
+
+If URL resolution reaches admission capacity partway through a page, committed
+bindings remain intact and remaining targets retry with backoff. The dispatcher
+continues submitting and executing queued work; admission pressure must not stop
+the work that frees capacity.
+
 Callers that can retry a command after losing its response should supply a stable
 `ticket_uuid` to `enqueue` (CLI `--ticket`). A ticket replay returns its existing
 intent even after server admission. Changed request contents under that ticket

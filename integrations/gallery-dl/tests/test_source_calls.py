@@ -4,8 +4,9 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from types import SimpleNamespace
+from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import uuid
 
 from stash_ingest.caller_input import record_file_call
@@ -226,6 +227,44 @@ class SourceCallTests(unittest.TestCase):
         self.now += 10000
         self.assertEqual(resolve_once(self.calls, self.client)["state"], "idle")
         self.assertEqual(RunQueue(self.box).status()["caller_tickets"], 0)
+
+    def test_partial_resolution_capacity_preserves_bindings_and_dispatch_keeps_draining(self):
+        from stash_ingest.run_queue import submit_once
+        from stash_ingest.worker_dispatch import dispatch_all
+        from test_run_queue import admission
+
+        self.record(2)
+        limited = RunQueue(self.box, max_groups=1)
+        self.client.capabilities.return_value["source_run_submission_receipts"] = True
+        lookup = self.http
+        self.client._request.side_effect = lambda method, route, body=None, **kw: (
+            admission(body) if method == "POST" and route == "/runs" else lookup(method, route, body, **kw))
+        profiles = SimpleNamespace(uuid=str(uuid.uuid4()), entries=[
+            {"id": "download", "operation": "download", "profile": self.path.parent / "profile.json"}])
+        with patch("stash_ingest.source_calls.RunQueue", return_value=limited), patch(
+                "stash_ingest.worker_dispatch.ProfileDispatcher") as dispatcher:
+            dispatcher.return_value.once.return_value = {"state": "source_succeeded"}
+            result = dispatch_all(self.box, self.client, profiles)
+        self.assertEqual(result["resolution"]["error_code"], "caller_submission_capacity")
+        self.assertEqual(result["resolution"]["counts"], {"queued": 1, "review": 0})
+        self.assertEqual(result["submission"]["state"], "admitted")
+        self.assertEqual(result["state"], "source_succeeded")
+        dispatcher.return_value.once.assert_called_once()
+        rows = self.calls.page(self.call_uuid)
+        self.assertEqual([r["state"] for r in rows], ["queued", "pending"])
+        self.assertEqual(rows[1]["error_code"], "caller_submission_capacity")
+        first_binding = rows[0]
+        self.box.close()
+        self.box = self.open()
+        self.calls = SourceCalls(self.box)
+        self.assertEqual(resolve_once(self.calls, self.client)["state"], "idle")
+        self.now += 5
+        with patch("stash_ingest.source_calls.RunQueue", return_value=RunQueue(self.box, max_groups=1)):
+            self.assertEqual(resolve_once(self.calls, self.client)["state"], "queued")
+        self.assertEqual(self.calls.page(self.call_uuid)[0], first_binding)
+        self.assertEqual(submit_once(RunQueue(self.box), self.client)["state"], "admitted")
+        self.assertEqual(RunQueue(self.box).active_configurations(), 0)
+        self.assertEqual(self.calls.summary(self.call_uuid)["counts"]["queued"], 2)
 
     def test_capacity_retains_old_calls_and_never_partially_records_a_list(self):
         limited = SourceCalls(self.box, max_targets=2)
