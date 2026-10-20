@@ -134,6 +134,8 @@ class DownloadOutboxTests(unittest.TestCase):
         parent = capture()
         self.box.enqueue(encode(parent))
         before = tuple(self.box.db.execute("SELECT * FROM events").fetchone())
+        self.box.db.execute("DROP TABLE IF EXISTS missing_media")
+        self.box.db.execute("DROP TABLE IF EXISTS deleted_media")
         self.box.db.execute("DROP TABLE IF EXISTS worker_configurations")
         self.box.db.execute("PRAGMA user_version=15")
         self.box.close()

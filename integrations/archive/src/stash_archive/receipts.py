@@ -124,7 +124,7 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
     reports, producers = [], set()
     for queue in outboxes:
         if (queue.execute("PRAGMA application_id").fetchone()[0] != 0x5354494F
-                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 19)):
+                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 20)):
             raise InvalidArchive("Unsupported producer snapshot for receipt verification")
         binding = queue.execute("SELECT endpoint,producer FROM binding").fetchall()
         if len(binding) != 1 or origin(binding[0][0]) != expected_origin:
@@ -201,9 +201,13 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
         from .job_receipts import verify_job_journals
         admissions = verify_run_admissions(library, queue, producer, queue.execute("PRAGMA user_version").fetchone()[0])
         journals = verify_job_journals(library, queue, producer, queue.execute("PRAGMA user_version").fetchone()[0])
+        from .missing_media import verify_missing_media
+        missing_media = verify_missing_media(queue, queue.execute("PRAGMA user_version").fetchone()[0])
         reports.append({"producer_uuid": producer, "events": sum(counts[k] for k in ("acknowledged", "pending", "sending", "review")),
                         "maximum_sequence": maximum_sequence, "counts": counts, "boundary_sha256": digest.hexdigest(),
                         "source_admissions": admissions, "job_journals": journals})
+        if missing_media is not None:
+            reports[-1]["missing_media"] = missing_media
     if any(row[0] not in producers for row in library.execute("SELECT uuid FROM ingest_producers")):
         raise InvalidArchive("A registered producer has no matching outbox snapshot")
     return {"format": FORMAT + ".ingestion-receipt-boundary", "version": 1,

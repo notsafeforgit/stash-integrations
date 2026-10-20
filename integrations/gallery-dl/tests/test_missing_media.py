@@ -30,7 +30,8 @@ class MissingMediaTests(test_gallery.unittest.TestCase):
     archive_count = test_gallery.GalleryTests.archive_count
 
     def missing_count(self):
-        with missing_media.journal(self.box) as db:
+        with self.box.transaction():
+            db = self.box.db
             return db.execute('SELECT count(*) FROM missing_media').fetchone()[0]
 
     def run_posts(self, codes):
@@ -116,18 +117,11 @@ class MissingMediaTests(test_gallery.unittest.TestCase):
         self.assertIsNone(missing_media.target('reddit', 'https://imgur.com/Another', reddit_data(url='https://imgur.com/Missing')))
         self.assertIsNone(missing_media.target('imgur', 'https://imgur.com/Missing', reddit_data(url='https://imgur.com/Missing')))
 
-    def test_partial_retry_count_survives_interruption_without_changing_the_outbox(self):
+    def test_partial_retry_count_uses_outbox_and_survives_restart(self):
         bound = missing_media.target('reddit', 'https://imgur.com/Missing', reddit_data(url='https://imgur.com/Missing'))
         self.assertIsNone(missing_media.failed(self.box, bound, 404))
         self.assertIsNone(missing_media.failed(self.box, bound, 404))
         with closing(Outbox(self.box.path, self.box.endpoint, self.box.producer)) as reopened:
             self.assertEqual(missing_media.failed(reopened, bound, 410)['attempts'], 3)
-        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 18)
-        self.assertIsNone(self.box.db.execute("SELECT name FROM sqlite_master WHERE name='missing_media'").fetchone())
-
-    def test_foreign_or_misbound_cache_is_preserved_and_rejected(self):
-        from stash_ingest.encoding import InvalidData
-        with missing_media.journal(self.box) as db:
-            db.execute("UPDATE binding SET producer='another-producer'")
-        with self.assertRaisesRegex(InvalidData, 'different producer'):
-            with missing_media.journal(self.box): pass
+        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 19)
+        self.assertFalse(self.box.path.with_name(self.box.path.name + '.missing-media.sqlite').exists())

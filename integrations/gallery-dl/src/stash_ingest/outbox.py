@@ -17,7 +17,7 @@ from .encoding import InvalidData, MAX_BATCH_BYTES, decode, digest, encode, iden
 from .endpoint import origin
 
 APPLICATION_ID = 0x5354494F  # STIO, not a Stash or gallery-dl archive database.
-SCHEMA = 18
+SCHEMA = 19
 
 
 class Conflict(InvalidData):
@@ -189,6 +189,9 @@ class Outbox:
         if version < 18:
             from .deleted_media import migrate
             migrate(self.db)
+        if version < 19:
+            from .missing_media_migration import migrate
+            migrate(self, version)
         self.db.execute(f"PRAGMA user_version={SCHEMA}")
 
     def _migrate_dispatch(self):

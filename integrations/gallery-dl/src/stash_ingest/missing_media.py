@@ -5,18 +5,14 @@ three observations the producer retains a skip decision across restarts.
 Authentication, listing, rate-limit and transport failures remain retryable.
 """
 
-from contextlib import contextmanager
-import os
 import re
-import sqlite3
 from urllib.parse import urlsplit
 
 from . import reddit_external
-from .encoding import InvalidData, utc_now
+from .encoding import utc_now
 from .retention import retain
 
 MAX_ATTEMPTS = 3
-APPLICATION_ID = 0x534D4953  # SMIS: expendable skip observations, not a producer queue.
 
 
 class MissingMedia(Exception):
@@ -33,39 +29,6 @@ def initialize(db):
         http_status INTEGER NOT NULL CHECK(http_status IN (404,410)),
         PRIMARY KEY(service,item))''')
 
-
-@contextmanager
-def journal(box):
-    # This cache may be discarded without losing a caller, capture or receipt.
-    # Keep it separate so old producer/archive readers remain compatible.
-    path = box.path.with_name(box.path.name + '.missing-media.sqlite')
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    os.close(fd)
-    db = sqlite3.connect(path, timeout=15)
-    db.row_factory = sqlite3.Row
-    try:
-        db.execute('PRAGMA synchronous=FULL')
-        db.execute('BEGIN IMMEDIATE')
-        version = db.execute('PRAGMA user_version').fetchone()[0]
-        application = db.execute('PRAGMA application_id').fetchone()[0]
-        if version == 0 and application == 0 and not db.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
-            initialize(db)
-            db.execute('CREATE TABLE binding(endpoint TEXT NOT NULL,producer TEXT NOT NULL)')
-            db.execute('INSERT INTO binding VALUES(?,?)', (box.endpoint, box.producer))
-            db.execute(f'PRAGMA application_id={APPLICATION_ID}')
-            db.execute('PRAGMA user_version=1')
-        elif version != 1 or application != APPLICATION_ID:
-            raise InvalidData('Unsupported or foreign missing-media cache')
-        bindings = db.execute('SELECT endpoint,producer FROM binding').fetchall()
-        if len(bindings) != 1 or tuple(bindings[0]) != (box.endpoint, box.producer):
-            raise InvalidData('Missing-media cache identifies a different producer')
-        yield db
-        db.commit()
-    except BaseException:
-        db.rollback()
-        raise
-    finally:
-        db.close()
 
 def target(category, url, metadata):
     if category != 'reddit':
@@ -123,14 +86,16 @@ def status(row):
 def cached(box, bound):
     if bound is None:
         return None
-    with journal(box) as db:
+    with box.transaction():
+        db = box.db
         row = db.execute('SELECT * FROM missing_media WHERE service=? AND item=? AND attempts=?',
                          (bound['service'], bound['item'], MAX_ATTEMPTS)).fetchone()
         return status(row) if row else None
 
 
 def failed(box, bound, http_status):
-    with journal(box) as db:
+    with box.transaction():
+        db = box.db
         now = utc_now()
         db.execute('''INSERT INTO missing_media(service,item,attempts,first_seen,last_seen,http_status)
             VALUES(?,?,1,?,?,?) ON CONFLICT(service,item) DO UPDATE SET
@@ -142,6 +107,7 @@ def failed(box, bound, http_status):
 
 
 def recovered(box, bound):
-    with journal(box) as db:
+    with box.transaction():
+        db = box.db
         db.execute('DELETE FROM missing_media WHERE service=? AND item=? AND attempts<?',
                        (bound['service'], bound['item'], MAX_ATTEMPTS))

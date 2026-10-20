@@ -66,3 +66,14 @@ part of automatic tests.
 See the [format and commands](https://github.com/notsafeforgit/stash/blob/develop/docs/native-archive-format.md) for installation,
 coverage, storage budgets, manifest rules and the remaining production backup
 coordination gates. Run `make setup test-archive` from the stash-integrations root.
+
+Producer schemas 1–19 are supported. Schema 19 adds missing-media observations
+and skip decisions to the producer snapshot. Verification checks the table's
+presence against the declared schema and reports its retrying/skipped counts
+and digest. Downgrading the header cannot hide that state, and future schemas
+remain rejected. Historical schema-18 receipt proofs retain their original
+shape and values, including when a sealed capture is resumed by the new reader.
+
+Deploy this reader before any shared producer outbox advances to schema 19.
+Worker migration, including the one-time import of v0.3's adjacent cache, is
+owned by stash-ingest; archive inspection never migrates a snapshot.

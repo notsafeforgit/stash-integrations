@@ -3407,7 +3407,7 @@ policy handoff while retaining all queued data.
 Reddit posts linking to individual Imgur or Redgifs items no longer hold a full
 account scrape when the exact item API repeatedly returns 404 or 410. The adapter
 makes at most three item requests, respecting the existing shared request budget.
-It saves observations in an adjacent `.missing-media.sqlite` cache, then retains a permanent skip for
+It saves observations in the producer outbox and retains a permanent skip for
 that service/item. A later traversal or worker restart reuses the decision. A
 success before the limit clears the failed observations. Explicit Redgifs deletion
 responses retain their existing handling.
@@ -3418,9 +3418,22 @@ download archive or produce a completed file event. Available Reddit previews ca
 still be downloaded. Account/listing requests, unrelated API endpoints, authentication,
 rate limits, network errors and server errors do not qualify for this skip.
 
-The cache uses its own producer binding and atomic transactions. Losing the cache
-only causes another bounded check; native jobs and receipts remain in the unchanged
-producer outbox. It does not change the portable archive format.
+Producer schema 19 stores these decisions in the same database as jobs and
+receipts. Its atomic migration imports v0.3's adjacent `.missing-media.sqlite`
+file once, checking the original producer binding and preserving every observation.
+The upgrade-only reader leaves that file unchanged; schema-19 workers never read
+or update it again. Keep it as rollout evidence until the imported rows are
+verified, then retire it. A corrupt or foreign file stops migration without
+altering the old outbox. Restarting retries the same migration transaction.
+
+Upgrade all readers and writers of a shared outbox together, including the n8n
+command environment and archive/backup tooling, before restarting workers.
+Versions through 18 remain readable by the new archive verifier with the same
+historical receipt report. Version 19 adds verified missing-media counts and a
+digest; future versions and downgraded headers that hide the table are rejected.
+The ordinary producer snapshot now includes skip decisions and partial attempts.
+Restoring it preserves both without a separate cache or inventory entry. The
+Stash library schema and portable archive container format are unchanged.
 
 Deployment changes the adapter policy fingerprint. Update the worker and n8n's
 mounted command environment together so new admissions use the same policy. Keep
