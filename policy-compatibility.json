@@ -1,0 +1,8 @@
+{
+  "schema": "stash-worker-compatibility-review-v1",
+  "capture_contract": "stash-gallery-v1",
+  "execution_contract": "stash-worker-execution-v1",
+  "implementation_sha256": "f5bc3fb18210c1dc732a98f5e7e67f483fce3459368b9a8479b9cd7f566173f6",
+  "decision": "introduce",
+  "reason": "Separate compatibility from exact source provenance. Execution v1 preserves v0.4 command meaning, coverage, cursors, cancellation and missing-media outcomes; existing source-hash admissions require one explicit policy upgrade, without resetting work."
+}

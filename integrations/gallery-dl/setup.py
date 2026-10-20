@@ -10,7 +10,7 @@ class SourceOnlyBuild(build_py):
     def run(self):
         super().run()
         # setuptools reuses build/lib and otherwise packages removed modules.
-        # Obsolete modules change the installed worker's policy fingerprint.
+        # Obsolete modules change installed provenance and can retain stale behavior.
         outputs = {Path(value).resolve() for value in self.get_outputs()}
         for path in (Path(self.build_lib) / 'stash_ingest').rglob('*.py'):
             if path.resolve() not in outputs:

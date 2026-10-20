@@ -13,7 +13,7 @@ import threading
 from .encoding import InvalidData, decode, digest, encode, identifier
 from .events import sha256
 from .filesystem import Root
-from .runtime import CAPTURE_VERSION, downloader_identity
+from .runtime import CAPTURE_VERSION, EXECUTION_CONTRACT, downloader_identity, implementation_identity
 
 SCHEMA = "stash-gallery-worker-v1"
 LAYERED_SCHEMA = "stash-gallery-worker-layers-v1"
@@ -134,13 +134,11 @@ def _asset(path, expected):
 
 def policy_identity():
     downloader_identity()
-    files = sorted(Path(__file__).parent.glob("*.py"))
-    sources = {file.name: digest(file.read_bytes()) for file in files}
-    return {"capture_contract": CAPTURE_VERSION, "adapter_sha256": digest(encode(sources))}
+    return {"capture_contract": CAPTURE_VERSION, "execution_contract": EXECUTION_CONTRACT}
 
 
 def runtime_identity():
-    return {**policy_identity(), "downloaders": downloader_identity()}
+    return {**policy_identity(), "adapter_sha256": implementation_identity(), "downloaders": downloader_identity()}
 
 
 class Configuration:
@@ -186,13 +184,13 @@ class Configuration:
         # Save the unexpanded policy, never cookies/tokens. Local references can
         # still rotate access credentials without changing a queued run's rules.
         self.document, self.base = copy.deepcopy(value), base
-        self.runtime = policy_identity()
+        self.compatibility = policy_identity()
         self.policy_sha256 = digest(encode({"version": SCHEMA, "operation": "download",
                                            "source_category": self.source_category,
                                            "source_mode": self.source_mode,
                                            "source_adapter": self.source_adapter,
                                            "scan_mode": self.scan_mode,
-                                           "runtime": self.runtime, "gallery_sha256": digest(profile_bytes(value["gallery"])),
+                                           "runtime": self.compatibility, "gallery_sha256": digest(profile_bytes(value["gallery"])),
                                            "assets": assets}, CONFIG_LIMIT))
 
     def _bindings(self, bindings, base, *, values=None, kinds=None):

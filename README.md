@@ -1,6 +1,6 @@
 # Stash integrations
 
-Optional Python clients for the [Stash fork](https://github.com/notsafeforgit/stash).
+Optional Python clients for the [Native Stash](https://github.com/notsafeforgit/stash).
 The Stash application remains a Go server and TypeScript UI. These packages run
 outside it and use its HTTP APIs; they do not write its live database directly.
 
@@ -47,3 +47,24 @@ Push a `v<version>` tag after updating all package versions. CI runs the tests,
 builds wheels/source archives and attaches them to a GitHub release. Downloader
 pins establish a tested baseline; installations may independently update upstream
 gallery-dl and yt-dlp under their own tested update policy.
+
+### Worker compatibility review
+
+Queue policies bind explicit execution/capture contracts, reviewed profile behavior
+and helper assets. Compatible code repairs and comments retain those policies.
+Diagnostics still identify every producer Python source (including entry points)
+and the exact installed downloader commits.
+
+For a producer source change, review its effect on admitted commands, coverage,
+cursors and retained outputs. Update `policy-compatibility.json` with the resulting
+source digest, decision and reason; `python scripts/check_policy_contract.py
+--print-identity` reports the digest. A compatible change keeps the contracts. An
+incompatible change increments `EXECUTION_CONTRACT` and requires an explicit queue
+upgrade plan. CI checks both the source digest and the transition from the event's
+base revision; the review file never participates in runtime policy hashing.
+
+Version 0.5 introduces this contract identity. Existing source-hash policies still
+need one explicit administrative upgrade during deployment. Keep producer UUIDs,
+outboxes, windows, checkpoints and retry deadlines. The outbox remains schema 19;
+there is no implicit policy alias or queue reset. Later compatible releases need
+no policy handoff solely because their Python bytes changed.

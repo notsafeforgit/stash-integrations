@@ -16,6 +16,8 @@ jobs:
         python: ['3.12', '3.14']
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
@@ -28,6 +30,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y ffmpeg libavif-bin
+      - name: Review worker compatibility transition
+        env:
+          REVIEW_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python scripts/check_policy_contract.py --base "$REVIEW_BASE"
       - run: make setup test
   packages:
     needs: test

@@ -16,6 +16,9 @@ def migrate(db):
     )""")
 
 
+# runtime_sha256 is the historical SQL column name for the policy identity hash.
+# It now binds the execution/capture contracts, never exact implementation bytes.
+# Retained old identities still require explicit server-approved policy upgrades.
 class Configurations:
     def __init__(self, box):
         self.box, self.db = box, box.db
@@ -32,7 +35,7 @@ class Configurations:
                     raise Capacity("Saved worker configuration capacity exhausted")
                 self.db.execute("""INSERT INTO worker_configurations
                     (profile,root_uuid,policy_sha256,runtime_sha256,document,document_sha256) VALUES(?,?,?,?,?,?)""",
-                    (profile, configuration.root_uuid, configuration.policy_sha256, digest(encode(configuration.runtime)), body, digest(body)))
+                    (profile, configuration.root_uuid, configuration.policy_sha256, digest(encode(configuration.compatibility)), body, digest(body)))
 
     def rows(self, filename, *, ready=False):
         filename = str(Path(filename).resolve())
@@ -47,7 +50,7 @@ class Configurations:
         result = Configuration.from_document(decode(row["document"], CONFIG_LIMIT), Path(row["profile"]).parent)
         result.filename = Path(row["profile"])
         if result.policy_sha256 != row["policy_sha256"] or result.root_uuid != row["root_uuid"]:
-            raise InvalidData("Saved worker policy requires an explicit runtime upgrade")
+            raise InvalidData("Saved worker policy requires an explicit compatibility upgrade")
         return result
 
     def visited(self, row, *, delay=0):

@@ -3398,9 +3398,11 @@ existing source pacing permit; source runs retain their configured cooldown
 with a 30-second minimum recovery delay. Transport polling also retains its
 normal backoff. Genuine source errors still increase the retry delay.
 
-An ordinary Stash restart needs no worker drain or n8n shutdown. A producer code
-upgrade can change its policy fingerprint and requires the normal reviewed
-policy handoff while retaining all queued data.
+An ordinary Stash restart needs no worker drain or n8n shutdown. Compatible
+producer repairs also preserve queued policies. An incompatible execution/capture
+contract or reviewed profile change requires the explicit policy handoff while
+retaining all queued data. Exact implementation bytes remain diagnostic provenance;
+see the [release compatibility review](../../README.md#worker-compatibility-review).
 
 ## Missing linked media
 
@@ -3435,7 +3437,7 @@ The ordinary producer snapshot now includes skip decisions and partial attempts.
 Restoring it preserves both without a separate cache or inventory entry. The
 Stash library schema and portable archive container format are unchanged.
 
-Deployment changes the adapter policy fingerprint. Update the worker and n8n's
+The schema-19 release changed the old source-based policy fingerprint. Update the worker and n8n's
 mounted command environment together so new admissions use the same policy. Keep
 producer IDs, database paths, file locks and queued receipts. Approve compatible
 policy upgrades for existing unfinished runs through Stash's administrative API;
