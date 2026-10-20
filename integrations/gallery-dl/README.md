@@ -3401,3 +3401,31 @@ normal backoff. Genuine source errors still increase the retry delay.
 An ordinary Stash restart needs no worker drain or n8n shutdown. A producer code
 upgrade can change its policy fingerprint and requires the normal reviewed
 policy handoff while retaining all queued data.
+
+## Missing linked media
+
+Reddit posts linking to individual Imgur or Redgifs items no longer hold a full
+account scrape when the exact item API repeatedly returns 404 or 410. The adapter
+makes at most three item requests, respecting the existing shared request budget.
+It saves observations in an adjacent `.missing-media.sqlite` cache, then retains a permanent skip for
+that service/item. A later traversal or worker restart reuses the decision. A
+success before the limit clears the failed observations. Explicit Redgifs deletion
+responses retain their existing handling.
+
+Skipped items retain their source capture, `native_media_status` with the reason
+and attempt count, and a failed attachment transfer. They never enter the successful
+download archive or produce a completed file event. Available Reddit previews can
+still be downloaded. Account/listing requests, unrelated API endpoints, authentication,
+rate limits, network errors and server errors do not qualify for this skip.
+
+The cache uses its own producer binding and atomic transactions. Losing the cache
+only causes another bounded check; native jobs and receipts remain in the unchanged
+producer outbox. It does not change the portable archive format.
+
+Deployment changes the adapter policy fingerprint. Update the worker and n8n's
+mounted command environment together so new admissions use the same policy. Keep
+producer IDs, database paths, file locks and queued receipts. Approve compatible
+policy upgrades for existing unfinished runs through Stash's administrative API;
+keep their UUIDs, windows, checkpoints and retry deadlines. A deferred configuration
+error still needs its own repair and review. Website downloader revisions remain
+unchanged by this release.

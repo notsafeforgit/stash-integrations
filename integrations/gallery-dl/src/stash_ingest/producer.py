@@ -144,6 +144,13 @@ class Producer:
     def prepare(self, metadata):
         return self._prepare(metadata)
 
+    def skipped(self, metadata, attachment, status):
+        prepared = self._prepare(dict(metadata, native_media_status=status), attachment=attachment)
+        self.report_download(prepared, 'failed', reason_code='source_failure')
+        self.routine_post_new = True
+        cursor, replay = self.cursor(prepared)
+        self.checkpoint(cursor, replay, False)
+
     def deleted(self, metadata, attachment, status):
         # The parent post identifies the missing external attachment even when
         # its deleted API item has no downloadable rendition. This is a failed
