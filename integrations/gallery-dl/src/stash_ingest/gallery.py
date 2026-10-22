@@ -59,7 +59,8 @@ class SourceSession:
             self.producer.report_source(permit)
             self.producer.fail_source("extraction_failed", scope)
         self.producer.report_source(permit, response)
-        if response.status_code == 429:
+        from .request_budget import network_security
+        if response.status_code == 429 or network_security(response, scope):
             response.close()
             self.producer.fail_source("rate_limited", scope)
         return response

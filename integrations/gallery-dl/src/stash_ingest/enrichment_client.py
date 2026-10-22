@@ -40,6 +40,7 @@ class EnrichmentClient:
                 or type(capabilities.get("enrichment_source_pacing_protocol")) is not int
                 or capabilities["enrichment_source_pacing_protocol"] != 1
                 or capabilities.get("enrichment_gap_protocol") != 1
+                or capabilities.get("source_request_backoff_protocol") != 1
                 or type(capabilities.get("max_enrichment_checkpoint_bytes")) is not int
                 or capabilities["max_enrichment_checkpoint_bytes"] < MAX_BYTES):
             raise Unavailable("native_enrichment_worker_unavailable")

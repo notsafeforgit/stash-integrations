@@ -44,4 +44,31 @@ class BudgetTests(unittest.TestCase):
         response.headers['Retry-After'] = '99999999'
         self.assertEqual(request_budget.retry_after(response), 86400)
         response.headers['Retry-After'] = 'invalid'
-        self.assertEqual(request_budget.retry_after(response), 60)
+        self.assertEqual(request_budget.retry_after(response), 0)  # The server owns adaptive fallback.
+
+
+class NetworkSecurityTests(unittest.TestCase):
+    def response(self, status=403, content_type='text/html', body=b"<div>You've been blocked by network security.</div>"):
+        import requests
+        result = requests.Response()
+        result.status_code = status
+        result.headers['Content-Type'] = content_type
+        result._content = body
+        return result
+
+    def test_block_is_distinct_from_missing_private_accounts_and_post_text(self):
+        for status in (200, 403):
+            response = self.response(status)
+            result = request_budget.response_result({'request_uuid': 'request', 'source_scope': 'service:reddit'}, response)
+            self.assertEqual(result, {'request_uuid': 'request', 'status': status,
+                                     'retry_after_seconds': 0, 'block_reason': 'network_security'})
+            self.assertFalse(request_budget.network_security(response, 'service:twitter'))
+        for response in (self.response(404), self.response(content_type='application/json'),
+                         self.response(body=b'<div>This community is private</div>')):
+            self.assertFalse(request_budget.network_security(response, 'service:reddit'))
+        self.assertTrue(request_budget.network_security(self.response(body=b"<div>You&#39;ve been <b>blocked</b> by network security.</div>"), 'service:reddit'))
+
+    def test_short_retry_after_is_not_inflated_by_local_sleep_defaults(self):
+        response = self.response(429)
+        response.headers['Retry-After'] = '7'
+        self.assertEqual(request_budget.retry_after(response), 7)

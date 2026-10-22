@@ -622,6 +622,36 @@ class GalleryTests(unittest.TestCase):
         self.assertNotIn("private-cookie", str(failure.exception))
         self.assertEqual(self.events(), [])
 
+    def test_reddit_security_block_reports_shared_failure_and_preserves_progress(self):
+        import requests
+        self.lease.reserve_source = lambda url: 'service:reddit'
+        reported = []
+        original = self.lease.client._request
+        def record(method, path, body):
+            if path.endswith('/requests/result'):
+                from stash_ingest.encoding import decode
+                reported.append(decode(body))
+            return original(method, path, body)
+        self.lease.client._request = record
+        task = self.task()
+        task._init()
+        response = requests.Response()
+        response.status_code = 403
+        response.headers['Content-Type'] = 'text/html; charset=utf-8'
+        response._content = b"<div>You've been blocked by network security.</div>"
+        response._content_consumed = True
+        with patch.object(task.extractor.session, 'request', return_value=response) as request:
+            with self.assertRaises(SourceFailure) as failure:
+                task.extractor.request('https://www.reddit.com/user/example/.json', retries=6, interval=False)
+            self.assertEqual((failure.exception.code, failure.exception.scope), ('rate_limited', 'service:reddit'))
+            with self.assertRaises(SourceFailure):
+                task.extractor.request('https://www.reddit.com/user/another/.json', interval=False)
+            request.assert_called_once()
+        self.assertEqual(reported[0]['status'], 403)
+        self.assertEqual(reported[0]['block_reason'], 'network_security')
+        self.assertEqual(self.events(), [])
+        self.assertEqual(self.lease.checkpoints, [])
+
     def test_source_rate_limit_and_timeout_stop_internal_http_retries(self):
         for code in ("rate_limited", "timeout"):
             with self.subTest(code=code):

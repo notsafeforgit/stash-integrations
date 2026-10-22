@@ -78,6 +78,7 @@ def execute(box, client, configuration, run_uuid):
             or capabilities.get("source_run_recovery_protocol") != 1
             or capabilities.get("source_run_pacing_protocol") != 1
             or capabilities.get("source_request_budget_protocol") != 1
+            or capabilities.get("source_request_backoff_protocol") != 1
             or capabilities.get("source_run_pagination_protocol") != 1
             or capabilities.get("source_run_instagram_pagination_protocol") != 1
             or capabilities.get("source_run_origins_protocol") != 1

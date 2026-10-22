@@ -429,16 +429,19 @@ def main(collector=None):
                 response = adapter_send(adapter, request, **kwargs)
             finally:
                 if permit is not None:
-                    from .request_budget import retry_after
-                    result = {'request_uuid': permit['request_uuid'], 'status': 0 if response is None else response.status_code,
-                              'retry_after_seconds': 0 if response is None else retry_after(response)}
+                    from .request_budget import response_result
+                    result = response_result(permit, response)
                     if exchange({'response': result}) != {'recorded': True}:
                         raise InvalidData('Metadata request response was not recorded')
             return response
 
         def guarded(session, request, **kwargs):
             response = send(session, request, **kwargs)
-            if response.status_code == 429:
+            from .request_budget import network_security
+            from urllib.parse import urlsplit
+            host = urlsplit(request.url).hostname or ""
+            scope = "service:reddit" if host == "reddit.com" or host.endswith(".reddit.com") else ""
+            if response.status_code == 429 or network_security(response, scope):
                 response.close()
                 raise RateLimited()
             return response

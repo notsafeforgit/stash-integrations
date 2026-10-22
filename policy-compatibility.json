@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "aaa6a5aa0be6914b94cd18336c83c0d1b14392e3085fc1a484892673cd2a67b0",
+  "implementation_sha256": "a36395b291484ad5fb3cc389eae75a92d52d6d8cd9e253a7a1d6b8183d25b320",
   "decision": "compatible",
-  "reason": "Bound run admission by outstanding configurations and tickets while retaining historical identities and receipts. Return resumable caller backpressure so existing submission and execution continue. Frozen commands, coverage, cursors, policy identities and producer schema 19 are unchanged."
+  "reason": "Recognize Reddit network-security block pages and report them to native shared request backoff before stopping extraction. Source outages retain pending windows, cursors, captures and receipts; saved command/capture contracts and producer schema 19 are unchanged. Require the additive native backoff capability before new source work."
 }

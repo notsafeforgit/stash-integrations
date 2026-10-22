@@ -49,12 +49,12 @@ class EnrichmentClientTests(unittest.TestCase):
 
     def test_capability_and_response_byte_limits(self):
         good = {"enrichment_protocol": 2, "max_enrichment_checkpoint_bytes": MAX_BYTES,
-                "enrichment_source_pacing_protocol": 1, "enrichment_gap_protocol": 1}
+                "enrichment_source_pacing_protocol": 1, "source_request_backoff_protocol": 1, "enrichment_gap_protocol": 1}
         self.transport.capabilities.return_value = good
         self.client.capabilities()
         for invalid in ({"enrichment_protocol": True}, {"max_enrichment_checkpoint_bytes": MAX_BYTES - 1},
                         {"enrichment_source_pacing_protocol": None}, {"enrichment_source_pacing_protocol": True},
-                        {"enrichment_source_pacing_protocol": 2}):
+                        {"enrichment_source_pacing_protocol": 2}, {"source_request_backoff_protocol": 0}):
             self.transport.capabilities.return_value = dict(good, **invalid)
             with self.assertRaises(Unavailable):
                 self.client.capabilities()

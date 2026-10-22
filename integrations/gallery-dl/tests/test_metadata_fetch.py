@@ -347,27 +347,39 @@ main()
             self.assertIn("error", result)
 
     def test_real_extractors_only_admit_single_posts_without_source_requests(self):
-        examples = [
-            ("https://www.reddit.com/comments/abc123", "reddit"),
-            ("https://x.com/Example/status/12345", "twitter"),
-            ("https://bsky.app/profile/example.bsky.social/post/3abc", "bluesky"),
-            ("https://www.tiktok.com/@example/video/12345", "tiktok"),
-            ("https://www.instagram.com/p/ABCxyz/", "instagram"),
-            ("https://coomer.st/onlyfans/user/123/post/456", "coomer"),
-            ("https://kemono.cr/patreon/user/123/post/456", "kemono"),
-            ("https://www.patreon.com/posts/title-12345", "patreon"),
-            ("https://fansly.com/post/12345", "fansly"),
-        ]
-        with patch("requests.sessions.Session.send", side_effect=AssertionError("unexpected network")):
-            for url, category in examples:
-                with self.subTest(url=url):
-                    target = extractor.find(url)
-                    self.assertIsNotNone(target)
-                    self.assertEqual(target.category, category)
-                    self.assertTrue(is_post(target))
-            for url in ("https://www.reddit.com/user/example/submitted/", "https://x.com/example",
-                        "https://kemono.cr/patreon/user/123", "https://i.redd.it/a.jpg"):
-                self.assertEqual(collect(url, {}), {"error": "not_a_post_url"})
+        # Direct extractor fixtures compile class patterns. Exercise the real
+        # registry in a fresh process, independent of fixture execution order.
+        script = """
+import unittest
+from unittest.mock import patch
+from gallery_dl import extractor
+from stash_ingest.metadata_fetch import collect, is_post
+case = unittest.TestCase()
+examples = [
+    ("https://www.reddit.com/comments/abc123", "reddit"),
+    ("https://x.com/Example/status/12345", "twitter"),
+    ("https://bsky.app/profile/example.bsky.social/post/3abc", "bluesky"),
+    ("https://www.tiktok.com/@example/video/12345", "tiktok"),
+    ("https://www.instagram.com/p/ABCxyz/", "instagram"),
+    ("https://coomer.st/onlyfans/user/123/post/456", "coomer"),
+    ("https://kemono.cr/patreon/user/123/post/456", "kemono"),
+    ("https://www.patreon.com/posts/title-12345", "patreon"),
+    ("https://fansly.com/post/12345", "fansly"),
+]
+with patch("requests.sessions.Session.send", side_effect=AssertionError("unexpected network")):
+    for url, category in examples:
+        with case.subTest(url=url):
+            target = extractor.find(url)
+            case.assertIsNotNone(target)
+            case.assertEqual(target.category, category)
+            case.assertTrue(is_post(target))
+    for url in ("https://www.reddit.com/user/example/submitted/", "https://x.com/example",
+                "https://kemono.cr/patreon/user/123", "https://i.redd.it/a.jpg"):
+        case.assertEqual(collect(url, {}), {"error": "not_a_post_url"})"""
+        import subprocess
+        result = subprocess.run([sys.executable, '-B', '-c', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 
 class BundleTests(unittest.TestCase):
@@ -564,7 +576,7 @@ main()
                 return True
             def request(self, url):
                 self.requests.append(url)
-                return {'request_uuid': str(__import__('uuid').uuid4())} if url.endswith(('/one', '/redirected')) else None
+                return {'request_uuid': str(__import__('uuid').uuid4()), 'source_scope': 'host:fixture.invalid'} if url.endswith(('/one', '/redirected')) else None
             def report(self, result):
                 self.responses.append(result)
         budget = Budget()
@@ -575,6 +587,51 @@ main()
         self.assertNotEqual(budget.responses[0]['request_uuid'], budget.responses[1]['request_uuid'])
         self.assertEqual(result['pending'][0]['reason'], 'budget_yield')
         self.assertEqual(Bundle(URL, SUPPORTED_VERSION, result).metadata(0)['title'], 'Original caption')
+
+    def test_network_security_block_is_reported_before_metadata_retry(self):
+        script = """
+from gallery_dl import extractor
+from gallery_dl.extractor.common import Extractor
+from stash_ingest.metadata_fetch import main
+import requests
+class Fixture(Extractor):
+    category = 'reddit'
+    subcategory = 'submission'
+    pattern = r'https://fixture.invalid/.*'
+    def items(self):
+        self.request('https://www.reddit.com/comments/example/.json')
+        raise AssertionError('A blocked listing must never complete')
+        yield
+count = 0
+def blocked(*args, **kwargs):
+    global count
+    count += 1
+    assert count == 1
+    response = requests.Response()
+    response.status_code = 403
+    response.headers['Content-Type'] = 'text/html'
+    response._content = b"<div>You've been blocked by network security.</div>"
+    response._content_consumed = True
+    return response
+requests.adapters.HTTPAdapter.send = blocked
+extractor.find = Fixture.from_url
+main()
+"""
+        class Budget:
+            def __init__(self): self.responses = []
+            def __call__(self, url): return True
+            def request(self, url):
+                return {'request_uuid': '9bbcbe41-29fb-4c22-bef0-b56aee48f383',
+                        'source_scope': 'service:reddit', 'ready': True, 'wait_ms': 0}
+            def report(self, value): self.responses.append(value)
+        budget = Budget()
+        result = _exchange([sys.executable, '-B', '-c', script], encode({'url': URL,
+            'settings': {'extractor': {'sleep-request': 0}}, 'resume': None,
+            'source_pacing': True, 'request_budget': True}), 5, reserve_source=budget)
+        self.assertEqual(result, {'error': 'rate_limited'})
+        self.assertEqual(len(budget.responses), 1)
+        self.assertEqual(budget.responses[0]['block_reason'], 'network_security')
+        self.assertEqual(budget.responses[0]['status'], 403)
 
     def test_rate_limit_stops_on_first_response_without_leaking_body(self):
         script = '''

@@ -654,6 +654,32 @@ initializes gallery-dl logging once, including the lowercase levels used by
 configured actions such as `error:network security`. Logs go to stderr while
 the command's JSON result stays on stdout.
 
+## Shared source backoff
+
+Workers require native `source_request_backoff_protocol: 1` (schema 1000127).
+HTTP 429 responses and Reddit's recognized HTML network-security block stop
+extraction and report `rate_limited` for the affected service. The HTTP status is
+preserved; the Reddit block additionally reports `block_reason: network_security`.
+Ordinary private/missing accounts and individual media failures keep their own
+handling. No response bodies or website credentials enter the pacing records.
+
+Stash persists the cooldown and recovery probe in its existing source request
+budget, shared by downloads, metadata enrichment and every producer. An explicit
+Retry-After/reset hint controls the delay (bounded to one day by the protocol);
+otherwise retries wait 1, 2, 4, 8, then at most 15 minutes. Only one ordinary queued
+request probes recovery. A normal response restores ordinary pacing; another
+block or an inconclusive probe renews the delay. Probe leases expire after two
+minutes, and late responses or repeated acknowledgements cannot clear or extend
+a newer outage. Successful responses with exhausted-rate headers still defer
+subsequent requests until the reported reset.
+
+A reported service outage retains pending windows, pagination, captured evidence,
+receipts and metadata checkpoints. It neither increments the account/job failure
+counter nor adds the older five-minute/exponential account delay. No work is
+marked complete or skipped because of throttling. Deploy the native server before
+these workers; the capability check prevents starting extraction on older servers.
+Saved worker policies and producer schema 19 remain unchanged.
+
 ## Converting existing gallery-dl settings
 
 `stash-ingest-config` reads ordered JSON config layers and writes a **new,

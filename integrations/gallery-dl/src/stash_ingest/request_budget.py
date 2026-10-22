@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import math
+import html
+import re
 from urllib.parse import urlsplit
 import uuid
 
@@ -42,9 +44,28 @@ def retry_after(response):
                 delay = max(delay, reset - now.timestamp() if prefix == 'x-rate-limit-' else reset)
         except (ValueError, TypeError, KeyError, OverflowError):
             pass
-    if response.status_code == 429:
-        delay = max(60, delay)
     return min(86400, max(0, math.ceil(delay))) if math.isfinite(delay) else 60
+
+
+def network_security(response, scope):
+    """Recognize Reddit's block page, never a private account or post text."""
+    if scope != 'service:reddit' or response.status_code not in (200, 403):
+        return False
+    content_type = response.headers.get('Content-Type', '').lower()
+    if 'html' not in content_type:
+        return False
+    body = html.unescape(response.content[:65536].decode('utf-8', 'replace')).lower().replace('’', "'")
+    body = ' '.join(re.sub('<[^>]*>', ' ', body).split())
+    return "you've been blocked by network security" in body
+
+
+def response_result(permit, response):
+    result = {'request_uuid': permit['request_uuid'],
+              'status': 0 if response is None else response.status_code,
+              'retry_after_seconds': 0 if response is None else retry_after(response)}
+    if response is not None and network_security(response, permit['source_scope']):
+        result['block_reason'] = 'network_security'
+    return result
 
 
 def request(producer, url):
@@ -73,9 +94,7 @@ def report(producer, permit, response=None):
     lease.check()
     with lease.lock:
         result = lease.client._request('POST', '/runs/' + lease.run_uuid + '/requests/result', encode({
-            'owner_uuid': lease.owner, 'fence': lease.run['fence'], 'request_uuid': permit['request_uuid'],
-            'status': 0 if response is None else response.status_code,
-            'retry_after_seconds': 0 if response is None else retry_after(response)}, 4096))
+            'owner_uuid': lease.owner, 'fence': lease.run['fence'], **response_result(permit, response)}, 4096))
     if result != {'recorded': True}:
         raise InvalidData('Invalid source request acknowledgement')
 
