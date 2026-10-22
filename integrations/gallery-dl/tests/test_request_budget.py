@@ -68,6 +68,22 @@ class NetworkSecurityTests(unittest.TestCase):
             self.assertFalse(request_budget.network_security(response, 'service:reddit'))
         self.assertTrue(request_budget.network_security(self.response(body=b"<div>You&#39;ve been <b>blocked</b> by network security.</div>"), 'service:reddit'))
 
+    def test_block_after_large_inline_styles_is_not_missed(self):
+        # The live block response put its message at byte 189318 of 189908.
+        # Larger layouts must not silently fall back to an account failure.
+        for prefix_bytes in (190000, 1024 * 1024):
+            with self.subTest(prefix_bytes=prefix_bytes):
+                body = (b'<html><head><style>' + b' ' * prefix_bytes
+                        + b'</style></head><body><div>You&#39;ve been '
+                        + b'<b>blocked</b> by network security.</div></body></html>')
+                response = self.response(body=body)
+                result = request_budget.response_result(
+                    {'request_uuid': 'request', 'source_scope': 'service:reddit'}, response)
+                self.assertEqual(result['block_reason'], 'network_security')
+                self.assertEqual(result['status'], 403)
+                response.headers['Content-Type'] = 'application/json'
+                self.assertFalse(request_budget.network_security(response, 'service:reddit'))
+
     def test_short_retry_after_is_not_inflated_by_local_sleep_defaults(self):
         response = self.response(429)
         response.headers['Retry-After'] = '7'

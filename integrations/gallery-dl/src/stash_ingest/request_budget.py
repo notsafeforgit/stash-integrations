@@ -54,7 +54,9 @@ def network_security(response, scope):
     content_type = response.headers.get('Content-Type', '').lower()
     if 'html' not in content_type:
         return False
-    body = html.unescape(response.content[:65536].decode('utf-8', 'replace')).lower().replace('’', "'")
+    # Requests has already buffered this response. Reddit's inline styling can
+    # put the block message well beyond 64 KiB; a prefix is not the document.
+    body = html.unescape(response.content.decode('utf-8', 'replace')).lower().replace('’', "'")
     body = ' '.join(re.sub('<[^>]*>', ' ', body).split())
     return "you've been blocked by network security" in body
 

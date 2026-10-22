@@ -610,7 +610,8 @@ def blocked(*args, **kwargs):
     response = requests.Response()
     response.status_code = 403
     response.headers['Content-Type'] = 'text/html'
-    response._content = b"<div>You've been blocked by network security.</div>"
+    response._content = (b"<style>" + b" " * 190000 + b"</style>"
+                         + b"<div>You've been blocked by network security.</div>")
     response._content_consumed = True
     return response
 requests.adapters.HTTPAdapter.send = blocked

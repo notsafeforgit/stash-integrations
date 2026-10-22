@@ -638,7 +638,8 @@ class GalleryTests(unittest.TestCase):
         response = requests.Response()
         response.status_code = 403
         response.headers['Content-Type'] = 'text/html; charset=utf-8'
-        response._content = b"<div>You've been blocked by network security.</div>"
+        response._content = (b"<style>" + b" " * 190000 + b"</style>"
+                             + b"<div>You've been blocked by network security.</div>")
         response._content_consumed = True
         with patch.object(task.extractor.session, 'request', return_value=response) as request:
             with self.assertRaises(SourceFailure) as failure:

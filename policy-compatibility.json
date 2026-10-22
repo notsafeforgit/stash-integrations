@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "a36395b291484ad5fb3cc389eae75a92d52d6d8cd9e253a7a1d6b8183d25b320",
+  "implementation_sha256": "7e293dc273528a47eab0a8840d912ada6ad0256dd8fed1e2d23bec8ae722fa8b",
   "decision": "compatible",
-  "reason": "Recognize Reddit network-security block pages and report them to native shared request backoff before stopping extraction. Source outages retain pending windows, cursors, captures and receipts; saved command/capture contracts and producer schema 19 are unchanged. Require the additive native backoff capability before new source work."
+  "reason": "Inspect the complete buffered Reddit HTML response so large inline styles cannot hide a network-security block. Report the existing native shared-backoff result before stopping extraction, without changing queued commands, producer schema 19, captures, windows, pagination or receipts."
 }

@@ -660,6 +660,8 @@ Workers require native `source_request_backoff_protocol: 1` (schema 1000127).
 HTTP 429 responses and Reddit's recognized HTML network-security block stop
 extraction and report `rate_limited` for the affected service. The HTTP status is
 preserved; the Reddit block additionally reports `block_reason: network_security`.
+Block detection examines the complete buffered HTML response, including messages
+after large inline styles; it never stores the response body in the request report.
 Ordinary private/missing accounts and individual media failures keep their own
 handling. No response bodies or website credentials enter the pacing records.
 
