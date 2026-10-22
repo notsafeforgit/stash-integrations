@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "7e293dc273528a47eab0a8840d912ada6ad0256dd8fed1e2d23bec8ae722fa8b",
+  "implementation_sha256": "e8ecae3b3c96316f2d5b9283daaa0c1858433fe53d6575ee61fe3ff8ec864172",
   "decision": "compatible",
-  "reason": "Inspect the complete buffered Reddit HTML response so large inline styles cannot hide a network-security block. Report the existing native shared-backoff result before stopping extraction, without changing queued commands, producer schema 19, captures, windows, pagination or receipts."
+  "reason": "Repair the separate dedupe client: decode fclones STFU-8 paths, durably review unsupported local filenames, and avoid discovery while backup holds the library lock. Existing dedupe manifests and request UUIDs recover unchanged; worker execution, producer schema 19, queued commands, captures, coverage, cursors and receipts are unchanged."
 }

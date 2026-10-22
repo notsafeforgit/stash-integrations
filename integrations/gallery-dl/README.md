@@ -2085,6 +2085,23 @@ policies or enable scrapers. See the [native contract](https://github.com/notsaf
 
 ## Fclones-backed file deduplication
 
+Fclones JSON paths use STFU-8 inside JSON strings. The client decodes that
+format once before checking literal paths, containment, symlinks, filesystem,
+scope and size. Malformed escapes and unsafe reports still fail before any API
+request. Valid local filenames outside the native API's portable path contract
+(backslashes, control characters or non-UTF-8 bytes) put their whole duplicate
+group into `unsupported_media_path` review. Other groups continue normally;
+the client never rewrites names or silently chooses a different survivor.
+
+Discovery reviews retain the original lossless fclones paths in the version-2
+run manifest inside `dedupe.sqlite3`. The existing SQLite schema and backup
+role are unchanged. Version-1 pending runs, request UUIDs and uncertain receipts
+remain recoverable. Summary `pairs`/`review` counts include these groups' redundant
+copies, `discovery_review_groups` counts affected groups, and `all_removed` is
+false when any need review. Completed review passes use the ordinary daily
+cooldown. A held backup lock skips new discovery before starting fclones;
+discovery still releases the lock so a later backup can begin.
+
 `stash-dedupe` uses bounded `fclones group` discovery and the native Stash
 preview/apply API. It preserves the oldest copy, saves requests before sending
 them, and recovers committed receipts after interruption. Read-only discovery

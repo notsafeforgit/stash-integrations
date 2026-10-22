@@ -24,10 +24,14 @@ REJECTIONS = {"deduplication_preview_changed", "deduplication_bytes_differ", "fi
 
 def relative_path(value):
     if (not isinstance(value, str) or not value or value.startswith("/") or "\\" in value
-            or any(ord(c) < 32 or ord(c) == 127 for c in value)
+            or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value)
             or any(part in ("", ".", "..") for part in value.split("/"))):
         raise InvalidData("Expected a canonical root-relative media path")
-    if len(value.encode("utf-8")) > 4096:
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeError:
+        raise InvalidData("Media path must be valid UTF-8") from None
+    if size > 4096:
         raise InvalidData("Media path exceeds its byte limit")
     return value
 

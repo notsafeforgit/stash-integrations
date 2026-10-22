@@ -17,14 +17,30 @@ from .catalog_snapshot import sync_directory
 from .catalog_source import source_time
 from .catalog_upload import read_regular
 from .client import Unavailable
-from .dedupe_candidates import MAX_PAIRS, MAX_REPORT_BYTES, check_directory, directory_identity, discover, pairs_from_report
+from .dedupe_candidates import MAX_PAIRS, MAX_REPORT_BYTES, candidates_from_report, check_directory, directory_identity, discover, validate_review
 from .dedupe_client import BLOCKED, LIMIT, REJECTIONS, DeduplicationClient, validate_pair, validate_preview, validate_receipt, validate_request
 from .encoding import InvalidData, decode, digest, encode, identifier, utc_now
 from .publication_lock import PublicationBarrier
 
-FORMAT = "stash-file-deduplication-v1"
+FORMAT = "stash-file-deduplication-v2"
 JOURNAL_NAME = "dedupe.sqlite3"
 APPLICATION_ID = 0x53444450
+
+
+def discovery_review_count(reviews, config, pairs):
+    if not isinstance(reviews, list) or len(reviews) > MAX_PAIRS:
+        raise InvalidData("Invalid saved discovery reviews")
+    seen = {pair[key] for pair in pairs for key in ("keep_path", "remove_path")}
+    count = 0
+    for review in reviews:
+        paths = validate_review(review, config["root"])
+        if seen.intersection(paths):
+            raise InvalidData("Repeated path in discovery reviews")
+        seen.update(paths)
+        count += len(paths) - 1
+        if count + len(pairs) > MAX_PAIRS:
+            raise InvalidData("Dedupe pair limit exceeded")
+    return count
 
 
 @contextmanager
@@ -126,7 +142,7 @@ class Journal:
         if digest(body) != active[1]:
             raise InvalidData("Dedupe manifest changed")
         manifest = decode(body, MAX_REPORT_BYTES)
-        if (not isinstance(manifest, dict) or manifest.get("format") != FORMAT
+        if (not isinstance(manifest, dict) or manifest.get("format") not in ("stash-file-deduplication-v1", FORMAT)
                 or manifest.get("run_uuid") != self.run_uuid or manifest.get("config") != config):
             raise InvalidData("Saved dedupe scope differs; recover with its original configuration")
         source_time(manifest.get("created_at"))
@@ -166,6 +182,10 @@ class Journal:
             raise InvalidData("Dedupe operation is absent from its manifest")
         if removed & keepers:
             raise InvalidData("Dedupe plan removes a selected survivor")
+        # Version 1 has no discovery review records. Keep its saved operation
+        # UUIDs and uncertain intents intact; never rediscover a pending run.
+        self.discovery_reviews = manifest.get("discovery_reviews") if manifest["format"] == FORMAT else []
+        self.discovery_review_pairs = discovery_review_count(self.discovery_reviews, config, list(self.records.values()))
 
     @classmethod
     def has_active(cls, directory):
@@ -176,11 +196,14 @@ class Journal:
             return False
 
     @classmethod
-    def create(cls, directory, config, pairs):
+    def create(cls, directory, config, pairs, *, discovery_reviews=None):
         if len(pairs) > MAX_PAIRS:
             raise InvalidData("Dedupe pair limit exceeded")
+        reviews = [] if discovery_reviews is None else discovery_reviews
+        discovery_review_count(reviews, config, pairs)
         run = str(uuid.uuid4())
         manifest = {"format": FORMAT, "run_uuid": run, "config": config, "created_at": utc_now(),
+                    "discovery_reviews": reviews,
                     "pairs": [{"uuid": str(uuid.uuid4()), "pair": validate_pair({"root_uuid": config["root_uuid"], **pair})}
                               for pair in pairs]}
         body = encode(manifest, MAX_REPORT_BYTES)
@@ -245,10 +268,14 @@ class Journal:
     def report(self):
         counts = Counter(result["state"] for result in self.results.values())
         reasons = Counter(result["reason"] for result in self.results.values() if result["state"] == "review")
-        return {"run_uuid": self.run_uuid, "pairs": len(self.records), "committed": counts["committed"],
-                "review": counts["review"], "pending": len(self.records) - len(self.results),
+        if self.discovery_review_pairs:
+            reasons["unsupported_media_path"] += self.discovery_review_pairs
+        total = len(self.records) + self.discovery_review_pairs
+        return {"run_uuid": self.run_uuid, "pairs": total, "committed": counts["committed"],
+                "review": counts["review"] + self.discovery_review_pairs,
+                "discovery_review_groups": len(self.discovery_reviews), "pending": len(self.records) - len(self.results),
                 "review_reasons": dict(reasons), "finished": len(self.records) == len(self.results),
-                "all_removed": len(self.records) == counts["committed"]}
+                "all_removed": total == counts["committed"]}
 
     def finish(self):
         report = self.report()
@@ -349,16 +376,21 @@ def run(args):
         if Journal.has_active(state):
             journal = Journal(state, config)
         else:
+            # Do not start expensive discovery while a backup already owns the
+            # library. Release immediately: a new backup may still start during
+            # discovery, and every later request reacquires the real boundary.
+            with exclusive_lock(config["library_lock"]) as library_check:
+                library_check()
             # Fclones never mutates media. Do not block downloads and backups
             # for a full-library scan; Stash rechecks each candidate and proves
             # equal bytes under its own file-lifetime/deletion guards at Apply.
             if args.report:
-                pairs = pairs_from_report(read_regular(args.report, MAX_REPORT_BYTES), root,
-                                          all_content=args.all_content)
+                candidates = candidates_from_report(read_regular(args.report, MAX_REPORT_BYTES), root,
+                                                    all_content=args.all_content)
             else:
-                pairs = discover(args.fclones, root, all_content=args.all_content)
+                candidates = discover(args.fclones, root, all_content=args.all_content)
             check()
-            journal = Journal.create(state, config, pairs)
+            journal = Journal.create(state, config, candidates.pairs, discovery_reviews=candidates.reviews)
         return apply_saved(client, journal, check, boundary=boundary)
 
 

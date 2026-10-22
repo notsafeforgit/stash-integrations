@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import sqlite3
 import threading
@@ -16,9 +17,9 @@ import uuid
 
 from stash_ingest.client import Unavailable
 from stash_ingest.dedupe import Journal, apply_saved, exclusive_lock, main, private_directory, journal_database
-from stash_ingest.dedupe_candidates import directory_identity, discover, pairs_from_report
+from stash_ingest.dedupe_candidates import Candidates, directory_identity, discover, candidates_from_report
 from stash_ingest.dedupe_client import DeduplicationClient, validate_preview, validate_receipt
-from stash_ingest.encoding import InvalidData, decode, encode
+from stash_ingest.encoding import InvalidData, decode, digest, encode
 from stash_ingest.publication_lock import ACTIVE, GATE, PublicationBarrier, publication_lock
 
 ROOT = str(uuid.uuid4())
@@ -100,8 +101,8 @@ class DedupeTests(unittest.TestCase):
         client = MemoryClient(media)
         config = {"endpoint": client.endpoint, "root_uuid": ROOT, "root": directory_identity(media)}
         body = encode({"groups": [{"file_len": 800, "files": [str(media / f"{i}.mp4") for i in reversed(range(count))]}]})
-        pairs = pairs_from_report(body, config["root"], all_content=True)
-        journal = Journal.create(state, config, pairs)
+        pairs = candidates_from_report(body, config["root"], all_content=True)
+        journal = Journal.create(state, config, pairs.pairs)
         client.journal = journal
         return client, journal, body
 
@@ -247,22 +248,22 @@ class DedupeTests(unittest.TestCase):
                 body = copy.deepcopy(base)
                 body["groups"][0]["files"] = [str(client.root / "0.mp4"), bad]
                 with self.subTest(path=bad), self.assertRaises((InvalidData, OSError)):
-                    pairs_from_report(encode(body), journal.config["root"], all_content=True)
+                    candidates_from_report(encode(body), journal.config["root"], all_content=True)
             with self.assertRaises(InvalidData):
-                pairs_from_report(good, journal.config["root"], all_content=False)
+                candidates_from_report(good, journal.config["root"], all_content=False)
             (client.root / "1.mp4").write_bytes(b"changed")
             with self.assertRaises(InvalidData):
-                pairs_from_report(good, journal.config["root"], all_content=True)
+                candidates_from_report(good, journal.config["root"], all_content=True)
 
     def test_real_fclones_discovers_without_deleting(self):
-        executable = Path("/home/andrew/.cargo/bin/fclones")
-        if not executable.is_file():
-            self.skipTest("local fclones not installed")
+        executable = shutil.which("fclones")
+        if executable is None:
+            self.skipTest("fclones not installed")
         with tempfile.TemporaryDirectory() as directory:
             client, journal, _ = self.fixture(directory)
             self.assertEqual([{"keep_path": "0.mp4", "remove_path": "1.mp4"},
                               {"keep_path": "0.mp4", "remove_path": "2.mp4"}],
-                             discover(executable, journal.config["root"], all_content=True))
+                             discover(executable, journal.config["root"], all_content=True).pairs)
             self.assertEqual(3, len(list(client.root.iterdir())))
 
     def test_candidate_process_output_and_runtime_are_bounded(self):
@@ -314,13 +315,12 @@ class DedupeTests(unittest.TestCase):
                     "--lock-root", str(worker), "--report", str(report_path), "--all-content", "--lock-timeout", "0.1"]
             client = MemoryClient(media)
             with patch("stash_ingest.dedupe.DeduplicationClient", return_value=client):
-                with exclusive_lock(base / "library.lock"), redirect_stderr(io.StringIO()):
+                with exclusive_lock(base / "library.lock"), redirect_stderr(io.StringIO()), \
+                        patch("stash_ingest.dedupe.candidates_from_report") as discovery:
                     self.assertEqual(2, main(argv))
+                discovery.assert_not_called()
                 self.assertFalse(client.calls)
-                self.assertTrue(Journal.has_active(base / "state"))
-                # A blocked apply retains discovery. Recovery must not reread
-                # an expensive report, even if it is no longer available.
-                report_path.unlink()
+                self.assertFalse(Journal.has_active(base / "state"))
                 # A worker active on a different thread/process cannot be
                 # bypassed. Holding its ordinary shared lock is sufficient.
                 fd = os.open(worker / ACTIVE, os.O_RDWR | os.O_CREAT, 0o600)
@@ -332,12 +332,66 @@ class DedupeTests(unittest.TestCase):
                     os.close(fd)
                 self.assertFalse(client.calls)
                 self.assertTrue(Journal.has_active(base / "state"))
+                # A blocked apply retains discovery. Recovery must not reread
+                # an expensive report, even if it is no longer available.
+                report_path.unlink()
                 # Blocked candidates finish as review, not successful removal.
                 client.blocked = "different_media_owners"
                 with redirect_stdout(io.StringIO()) as output:
                     self.assertEqual(3, main(argv))
                 self.assertFalse(json.loads(output.getvalue())["all_removed"])
                 self.assertFalse(any(kind == "apply" for kind, _ in client.calls))
+
+    def test_discovery_review_is_durable_and_does_not_block_valid_pairs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client, previous, body = self.fixture(directory, 2)
+            state, _ = private_directory(Path(directory) / "mixed-state")
+            names = ["literal\\name.mp4", "other.mp4"]
+            for name in names:
+                (client.root / name).write_bytes(b"other duplicate")
+            review = {"reason": "unsupported_media_path", "file_len": 15,
+                      "files": [str(client.root / name).replace("\\", "\\\\") for name in names]}
+            source = decode(body)
+            source["groups"].append({k: v for k, v in review.items() if k != "reason"})
+            candidates = candidates_from_report(encode(source), previous.config["root"], all_content=True)
+            self.assertEqual([review], candidates.reviews)
+            client.journal = journal = Journal.create(state, previous.config, candidates.pairs,
+                                                      discovery_reviews=candidates.reviews)
+            client.lose_after = True
+            with self.assertRaises(Unavailable):
+                apply_saved(client, journal)
+            client.journal = resumed = Journal(state, previous.config)
+            self.assertEqual([review], resumed.discovery_reviews)
+            self.assertEqual(journal.intents, resumed.intents)
+            result = apply_saved(client, resumed)
+            self.assertEqual((2, 1, 1, 0), tuple(result[k] for k in ("pairs", "committed", "review", "pending")))
+            self.assertEqual({"unsupported_media_path": 1}, result["review_reasons"])
+            self.assertEqual(1, result["discovery_review_groups"])
+            self.assertTrue(result["finished"])
+            self.assertFalse(result["all_removed"])
+            self.assertEqual(1, sum(kind == "apply" for kind, _ in client.calls))
+            self.assertTrue(all((client.root / name).is_file() for name in names))
+            with journal_database(state) as db:
+                manifest, summary = db.execute("SELECT manifest,summary FROM runs WHERE uuid=?", (journal.run_uuid,)).fetchone()
+                self.assertEqual([review], decode(manifest)["discovery_reviews"])
+                self.assertEqual(result, decode(summary))
+
+    def test_version_one_uncertain_request_recovers_without_rediscovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client, journal, _ = self.fixture(directory, 2)
+            client.lose_after = True
+            with self.assertRaises(Unavailable):
+                apply_saved(client, journal)
+            with journal_database(journal.directory) as db:
+                manifest = decode(db.execute("SELECT manifest FROM runs WHERE uuid=?", (journal.run_uuid,)).fetchone()[0])
+                manifest["format"] = "stash-file-deduplication-v1"
+                del manifest["discovery_reviews"]
+                body = encode(manifest)
+                db.execute("UPDATE runs SET manifest=?,sha256=? WHERE uuid=?", (body, digest(body), journal.run_uuid))
+            client.journal = recovered = Journal(journal.directory, journal.config)
+            self.assertEqual(journal.intents, recovered.intents)
+            self.assertTrue(apply_saved(client, recovered)["all_removed"])
+            self.assertEqual(1, sum(kind == "apply" for kind, _ in client.calls))
 
     def test_discovery_allows_workers_and_backup_but_preview_requires_all_locks(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -367,7 +421,7 @@ class DedupeTests(unittest.TestCase):
                 with self.assertRaises(BlockingIOError), exclusive_lock(base / "state" / "run.lock"):
                     self.fail("only discovery's state lock should remain held")
                 self.assertFalse(client.calls)
-                return [{"keep_path": "0.mp4", "remove_path": "1.mp4"}]
+                return Candidates(pairs=[{"keep_path": "0.mp4", "remove_path": "1.mp4"}])
 
             def guarded_preview(pair):
                 for path in [library_lock, *(worker / name for worker in workers for name in (GATE, ACTIVE))]:

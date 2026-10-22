@@ -30,6 +30,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y ffmpeg libavif-bin
+      - name: Install pinned fclones report producer for integration tests
+        run: |
+          curl --fail --location --retry 3 https://github.com/pkolaczk/fclones/releases/download/v0.35.0/fclones-0.35.0-linux-glibc-x86_64.tar.gz --output /tmp/fclones.tar.gz
+          echo '24631bca99e4c20707d12f24676e83a5f1169bd350924dd9852157b243246dff  /tmp/fclones.tar.gz' | sha256sum --check --strict
+          tar -xzf /tmp/fclones.tar.gz -C /tmp ./usr/bin/fclones
+          sudo install /tmp/usr/bin/fclones /usr/local/bin/fclones
+          fclones --version
       - name: Review worker compatibility transition
         env:
           REVIEW_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
