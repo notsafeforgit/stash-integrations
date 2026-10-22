@@ -75,7 +75,11 @@ class Converter:
         self.root_uuid, self.root = Configuration._root(root, self.working, media=True)
         _, self.locks = Configuration._root(locks, self.working, media=False)
         self.root_definition = {"uuid": self.root_uuid, "path": str(self.root.path), "identity": list(self.root.identity)}
+        if self.root.filesystem_id is not None:
+            self.root_definition["filesystem_id"] = self.root.filesystem_id
         self.lock_definition = {"path": str(self.locks.path), "identity": list(self.locks.identity)}
+        if self.locks.filesystem_id is not None:
+            self.lock_definition["filesystem_id"] = self.locks.filesystem_id
         self.explicit_assets = {_path(str(path), self.working) for path in assets}
         self.bindings = {}
         self.removed = []

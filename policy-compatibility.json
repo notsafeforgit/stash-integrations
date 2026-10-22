@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "e8ecae3b3c96316f2d5b9283daaa0c1858433fe53d6575ee61fe3ff8ec864172",
+  "implementation_sha256": "3f2ead92a264491a314d363532d3bc1b82b276d5f22ba201de8fd000e7c209a9",
   "decision": "compatible",
-  "reason": "Repair the separate dedupe client: decode fclones STFU-8 paths, durably review unsupported local filenames, and avoid discovery while backup holds the library lock. Existing dedupe manifests and request UUIDs recover unchanged; worker execution, producer schema 19, queued commands, captures, coverage, cursors and receipts are unchanged."
+  "reason": "Add explicitly reviewed filesystem identity to directory validation and allow exact matching retained directory bindings to use that proof without rewriting frozen policies. Scrape command meaning, policy hashes, coverage, cursors, producer schema 19, outboxes and receipts are unchanged; legacy bindings without reviewed proof remain strict."
 }

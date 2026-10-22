@@ -155,7 +155,7 @@ def prepare(directory, endpoint, root, media, configs, key_env):
     """Finish local validation before creating server credentials. Retry in place."""
     endpoint, root = origin(endpoint), identifier(root)
     media = Path(media).expanduser().resolve(strict=True)
-    root_identity = list(Root.probe(media))
+    root_binding = Root.review(media)
     if directory.is_relative_to(media) or media.is_relative_to(directory):
         raise InvalidData('Keep worker state and the media folder in separate directories')
     files = [str(Path(path).expanduser().resolve(strict=True)) for path in configs]
@@ -191,8 +191,8 @@ def prepare(directory, endpoint, root, media, configs, key_env):
     profiles = {}
     for adapter, filename in (('gallery-dl', 'gallery-worker.json'), ('yt-dlp', 'ytdlp-worker.json')):
         value = {'schema': LAYERED_SCHEMA,
-                 'root': {'uuid': root, 'path': str(media), 'identity': root_identity},
-                 'locks': {'path': str(directory / 'locks'), 'identity': list(Root.probe(directory / 'locks'))},
+                 'root': {'uuid': root, **root_binding},
+                 'locks': Root.review(directory / 'locks'),
                  'config_files': [str(defaults), *files], 'working_directory': str(directory),
                  'source_mode': 'traversal', 'source_adapter': adapter, 'scan_mode': 'initial'}
         # All invalid config/asset/private references fail before registration.

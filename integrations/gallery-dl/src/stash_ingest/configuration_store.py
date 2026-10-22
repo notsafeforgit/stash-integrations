@@ -44,10 +44,11 @@ class Configurations:
             (filename, digest(encode(policy_identity())), int(ready), self.box.clock())).fetchall()
 
     @staticmethod
-    def load(row):
+    def load(row, *, directory_bindings=None):
         if digest(row["document"]) != row["document_sha256"]:
             raise InvalidData("Saved worker configuration changed")
-        result = Configuration.from_document(decode(row["document"], CONFIG_LIMIT), Path(row["profile"]).parent)
+        result = Configuration.from_document(decode(row["document"], CONFIG_LIMIT), Path(row["profile"]).parent,
+                                             directory_bindings=directory_bindings)
         result.filename = Path(row["profile"])
         if result.policy_sha256 != row["policy_sha256"] or result.root_uuid != row["root_uuid"]:
             raise InvalidData("Saved worker policy requires an explicit compatibility upgrade")

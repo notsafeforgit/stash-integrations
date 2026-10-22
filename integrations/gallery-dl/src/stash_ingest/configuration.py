@@ -12,7 +12,7 @@ import threading
 
 from .encoding import InvalidData, decode, digest, encode, identifier
 from .events import sha256
-from .filesystem import Root
+from .filesystem import Root, inherit_filesystem_identity
 from .runtime import CAPTURE_VERSION, EXECUTION_CONTRACT, downloader_identity, implementation_identity
 
 SCHEMA = "stash-gallery-worker-v1"
@@ -148,13 +148,13 @@ class Configuration:
         self._initialize(_json_file(filename), filename.parent)
 
     @classmethod
-    def from_document(cls, value, base_directory):
+    def from_document(cls, value, base_directory, *, directory_bindings=None):
         encode(value, CONFIG_LIMIT)
         result = cls.__new__(cls)
-        result._initialize(copy.deepcopy(value), Path(base_directory).resolve(strict=True))
+        result._initialize(copy.deepcopy(value), Path(base_directory).resolve(strict=True), directory_bindings=directory_bindings)
         return result
 
-    def _initialize(self, value, base):
+    def _initialize(self, value, base, *, directory_bindings=None):
         if isinstance(value, dict) and value.get("schema") == LAYERED_SCHEMA:
             from .config_migration import resolve_layers
             value = resolve_layers(value, base)
@@ -176,8 +176,9 @@ class Configuration:
             raise InvalidData('Invalid worker scan mode')
         if self.source_adapter not in ('gallery-dl', 'yt-dlp'):
             raise InvalidData('Invalid worker source adapter')
-        self.root_uuid, self.root = self._root(value["root"], base, media=True)
-        _, self.locks = self._root(value["locks"], base, media=False)
+        reviewed = directory_bindings or {}
+        self.root_uuid, self.root = self._root(inherit_filesystem_identity(value["root"], reviewed.get("root")), base, media=True)
+        _, self.locks = self._root(inherit_filesystem_identity(value["locks"], reviewed.get("locks")), base, media=False)
         assets = self._bindings(value["bindings"], base, values={"media_root": str(self.root.path)}, kinds={"media_root": "path"})
         self._gallery = self._expand(value["gallery"])
         self._validate(self._gallery)
@@ -239,10 +240,12 @@ class Configuration:
     @staticmethod
     def _root(value, base, *, media):
         fields = {"path", "identity", "uuid"} if media else {"path", "identity"}
-        if (not isinstance(value, dict) or set(value) != fields or not isinstance(value["identity"], list)
+        if (not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - {"filesystem_id"} or not isinstance(value["identity"], list)
                 or len(value["identity"]) != 2 or any(type(n) is not int or n < 0 for n in value["identity"])):
             raise InvalidData("Worker directories require reviewed device/inode identities")
-        return (identifier(value["uuid"]) if media else None), Root(_path(value["path"], base), value["identity"])
+        if "filesystem_id" in value and value["filesystem_id"] is None:
+            raise InvalidData("Invalid reviewed filesystem identity")
+        return (identifier(value["uuid"]) if media else None), Root(_path(value["path"], base), value["identity"], filesystem_id=value.get("filesystem_id"))
 
     def _expand(self, value, *, access=False):
         if isinstance(value, dict):

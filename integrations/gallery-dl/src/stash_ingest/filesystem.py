@@ -12,9 +12,15 @@ from .publication_lock import PublicationBusy
 
 
 class Root:
-    def __init__(self, path, identity):
+    def __init__(self, path, identity, *, filesystem_id=None):
         self.path = Path(path).resolve(strict=True)
+        if (not isinstance(identity, (list, tuple)) or len(identity) != 2
+                or any(type(n) is not int or n < 0 for n in identity)):
+            raise InvalidData("Invalid reviewed directory identity")
         self.identity = tuple(identity)
+        if filesystem_id is not None and (type(filesystem_id) is not int or not 0 < filesystem_id < 2**64):
+            raise InvalidData("Invalid reviewed filesystem identity")
+        self.filesystem_id = filesystem_id
         self.verify()
 
     @staticmethod
@@ -25,8 +31,38 @@ class Root:
         return (status.st_dev, status.st_ino)
 
     def verify(self):
-        if self.probe(self.path) != self.identity:
+        fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            self.verify_descriptor(fd)
+        finally:
+            os.close(fd)
+
+    def verify_descriptor(self, fd):
+        info = os.fstat(fd)
+        valid = (info.st_dev, info.st_ino) == self.identity
+        if self.filesystem_id is not None:
+            valid = info.st_ino == self.identity[1] and self._filesystem_id(fd) == self.filesystem_id
+        if not stat.S_ISDIR(info.st_mode) or not valid:
             raise InvalidData("Media root changed or its mount is unavailable")
+
+    @staticmethod
+    def _filesystem_id(fd):
+        value = getattr(os.fstatvfs(fd), "f_fsid", 0)
+        if type(value) is not int or not 0 < value < 2**64:
+            raise InvalidData("Filesystem does not expose a persistent identity")
+        return value
+
+    @staticmethod
+    def review(path):
+        """Probe a new/reviewed directory, never silently upgrade an old pin."""
+        path = Path(path).resolve(strict=True)
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(fd)
+            return {"path": str(path), "identity": [info.st_dev, info.st_ino],
+                    "filesystem_id": Root._filesystem_id(fd)}
+        finally:
+            os.close(fd)
 
     def relative(self, path):
         self.verify()
@@ -46,9 +82,7 @@ class Root:
         directories = [os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)]
         file = None
         try:
-            root_stat = os.fstat(directories[0])
-            if (root_stat.st_dev, root_stat.st_ino) != self.identity:
-                raise InvalidData("Media root changed while opening the file")
+            self.verify_descriptor(directories[0])
             for part in parts[:-1]:
                 directories.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                            dir_fd=directories[-1]))
@@ -79,6 +113,20 @@ class Root:
                 os.close(file)
             for directory in reversed(directories):
                 os.close(directory)
+
+
+def inherit_filesystem_identity(value, reviewed):
+    """Add current mount proof only to the exact same retained directory pin.
+
+    Frozen scrape rules and their original document stay unchanged. A changed
+    UUID, path, inode, or legacy device identity is a different review and cannot
+    authorize historical work through this narrow identity-format upgrade.
+    """
+    if (isinstance(value, dict) and isinstance(reviewed, dict)
+            and "filesystem_id" not in value and "filesystem_id" in reviewed
+            and all(value.get(key) == reviewed.get(key) for key in ("uuid", "path", "identity"))):
+        return {**value, "filesystem_id": reviewed["filesystem_id"]}
+    return value
 
 
 @contextmanager

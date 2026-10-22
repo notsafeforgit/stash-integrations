@@ -245,7 +245,7 @@ def main(argv=None):
             policy = run.get("execution_policy_sha256", run.get("policy_sha256"))
             for row in saved.rows(args.profile):
                 if row["policy_sha256"] == policy and row["root_uuid"] == run.get("root_uuid"):
-                    profile = saved.load(row)
+                    profile = saved.load(row, directory_bindings=profile.document)
                     break
             with worker_output():
                 output = execute_source(box, client, profile, args.run_uuid)

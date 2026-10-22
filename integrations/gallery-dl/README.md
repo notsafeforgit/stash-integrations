@@ -319,6 +319,23 @@ the live command handoff still require the coordinated cutover.
 
 ## Worker profiles and execution
 
+Directory bindings can include a reviewed, nonzero `filesystem_id` from
+`os.fstatvfs` alongside their original `identity: [device, inode]`. New
+`stash-gallery setup` configurations record it automatically. This identifies the
+filesystem independently of Linux's device number allocation after a reboot;
+the directory inode is still checked through its open descriptor. Replaced
+filesystems and directories remain errors. Legacy bindings without that proof
+retain their strict device/inode check.
+
+To upgrade an existing binding after a device-number change, first confirm the
+original filesystem and directory, then add its filesystem ID to the reviewed
+profile while retaining the original path, UUID and device/inode pair. This is
+an explicit deployment review, never an automatic guess after a mismatch.
+Retained policies may use this added proof only when those original binding
+fields match exactly. Their saved documents, hashes, scrape rules, request IDs,
+windows and cursors remain unchanged; no queue reset or schema change is needed.
+Backup inventory uses the same rule for retained profile dependencies.
+
 A `stash-gallery-worker-v1` JSON profile separates portable gallery-dl settings
 from deployment paths and local website-access references. Its five required
 keys are `schema`, `root`, `locks`, `gallery` and `bindings`. Optional

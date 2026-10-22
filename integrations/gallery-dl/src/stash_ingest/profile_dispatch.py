@@ -29,7 +29,7 @@ class ProfileDispatcher:
                 continue
             saved.visited(row)  # Rotate before execution, including process death.
             try:
-                profile = saved.load(row)
+                profile = saved.load(row, directory_bindings=current.document if current is not None else None)
                 result = Dispatcher(self.box, self.client, profile).once()
             except (OSError, InvalidData):
                 unavailable = True

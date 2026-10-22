@@ -218,6 +218,10 @@ with journal.execution() as owned:
 
 
 class EnrichmentConfigurationTests(unittest.TestCase):
+    def test_metadata_profiles_reject_download_directory_bindings(self):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(InvalidData):
+            EnrichmentConfiguration.from_document({}, directory, directory_bindings={"root": {}})
+
     def test_metadata_profile_has_no_media_root_and_excludes_writer_behavior_and_access_values(self):
         with tempfile.TemporaryDirectory() as directory:
             value = {"schema": PROFILE_SCHEMA, "source_category": "reddit", "bindings": {
