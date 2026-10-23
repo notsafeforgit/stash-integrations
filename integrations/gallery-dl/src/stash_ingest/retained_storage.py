@@ -4,8 +4,18 @@ New profiles use the local storage registry. Keep these checks unchanged when
 executing a v1 installation that has not explicitly selected a registry.
 """
 
+import re
+
 from .encoding import InvalidData, identifier
 from .filesystem import Root, inherit_filesystem_identity
+
+
+def registry_directory(path, token):
+    """Read the filesystem token emitted by 0.6.0 without changing its meaning."""
+    if not re.fullmatch(r"fs-v1:[1-9a-f][0-9a-f]{0,15}:(?:0|[1-9a-f][0-9a-f]{0,15})", token):
+        raise InvalidData("Unknown storage verification token")
+    _, filesystem, inode = token.split(":")
+    return Root(path, (0, int(inode, 16)), filesystem_id=int(filesystem, 16))
 
 
 def inline_root(value, base, *, media, path_resolver):

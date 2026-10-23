@@ -18,6 +18,7 @@ from stash_ingest.encoding import InvalidData
 from stash_ingest.outbox import Outbox
 from stash_ingest.profile_dispatch import ProfileDispatcher
 from stash_ingest.storage import StorageBindings, main, review, review_directory
+from stash_ingest.storage_marker import NAME, body
 from helpers import PRODUCER, ROOT
 from test_configuration import profile_fixture
 from test_layered_configuration import layered_fixture
@@ -157,12 +158,109 @@ class StorageBindingTests(unittest.TestCase):
             if stat.S_ISDIR(info.st_mode):
                 return SimpleNamespace(st_mode=info.st_mode, st_ino=info.st_ino, st_dev=info.st_dev+999)
             return info
-        with patch('stash_ingest.filesystem.os.fstat', side_effect=renumber):
+        with patch('stash_ingest.filesystem.os.fstat', side_effect=renumber), \
+                patch('os.fstatvfs', side_effect=AssertionError('Mount IDs are not durable storage identity')):
             self.activate().check()
         (self.directory/'media').rename(self.directory/'old')
         (self.directory/'media').mkdir()
         with self.assertRaises(InvalidData):
             Configuration(self.filename)
+
+    def test_missing_changed_or_unsafe_marker_pauses_work_without_repairing_it(self):
+        self.activate()
+        marker = self.directory / 'media' / NAME
+        original = marker.read_bytes()
+        for damage in ('missing', 'different', 'truncated', 'symlink', 'fifo'):
+            with self.subTest(damage=damage):
+                marker.unlink()
+                if damage == 'different':
+                    marker.write_bytes(body(str(uuid.uuid4())))
+                elif damage == 'truncated':
+                    marker.write_bytes(original[:10])
+                elif damage == 'symlink':
+                    target = self.directory / 'marker-target'
+                    target.write_bytes(original)
+                    marker.symlink_to(target)
+                elif damage == 'fifo':
+                    os.mkfifo(marker)
+                with self.assertRaises(InvalidData):
+                    Configuration(self.filename)
+                if damage == 'missing':
+                    self.assertFalse(marker.exists())
+                else:
+                    # Explicit setup must not silently replace corrupt evidence either.
+                    if damage == 'different':
+                        before = marker.read_bytes()
+                        review_directory(marker.parent)
+                        self.assertEqual(marker.read_bytes(), before)
+                    else:
+                        with self.assertRaises((InvalidData, OSError)):
+                            review_directory(marker.parent)
+                    marker.unlink()
+                marker.write_bytes(original)
+
+    def test_interrupted_provision_and_registry_publication_are_retryable(self):
+        fresh = self.directory / 'fresh'
+        fresh.mkdir()
+        with patch('stash_ingest.storage_marker.os.link', side_effect=OSError('interrupted publication')):
+            with self.assertRaises(OSError):
+                review_directory(fresh)
+        self.assertEqual(list(fresh.iterdir()), [])
+        binding = review_directory(fresh)
+        self.assertEqual(review_directory(fresh), binding)
+        output = self.directory / 'retried.json'
+        args = ['--root', ROOT, str(fresh), '--locks', str(self.directory/'locks'), '--output', str(output)]
+        with patch('stash_ingest.config_migration.publish_profile', side_effect=OSError('interrupted registry')), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(main(args), 1)
+        self.assertFalse(output.exists())
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(main(args), 0)
+        self.assertEqual(StorageBindings(json.loads(output.read_bytes()), output).document['roots'][ROOT], binding)
+
+    def test_concurrent_explicit_setups_share_one_marker(self):
+        from concurrent.futures import ThreadPoolExecutor
+        directory = self.directory / 'concurrent'
+        directory.mkdir()
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(executor.map(review_directory, [directory] * 16))
+        self.assertTrue(all(result == results[0] for result in results))
+        self.assertEqual([path.name for path in directory.iterdir()], [NAME])
+
+    def test_old_registry_tokens_keep_strict_historical_semantics(self):
+        from stash_ingest.filesystem import Root
+        value = copy.deepcopy(self.value)
+        for binding in (*value['roots'].values(), value['locks']):
+            old = Root.review(binding['path'])
+            binding['token'] = f"fs-v1:{old['filesystem_id']:x}:{old['identity'][1]:x}"
+        storage = StorageBindings(value, self.registry)
+        storage.bind(ROOT)
+        self.assertEqual(storage.verification_files(ROOT), [])
+        with patch('os.fstatvfs', return_value=SimpleNamespace(f_fsid=1)):
+            with self.assertRaises(InvalidData):
+                storage.bind(ROOT)
+
+    def test_directory_change_during_hashing_is_rejected_even_with_copied_marker(self):
+        current = self.activate()
+        media = self.directory / 'media'
+        output = media / 'finished.jpg'
+        output.write_bytes(b'finished content')
+        original_read = os.read
+        moved = False
+        def move_during_read(fd, amount):
+            nonlocal moved
+            result = original_read(fd, amount)
+            if amount == 1 << 20 and not moved:
+                moved = True
+                marker = (media / NAME).read_bytes()
+                media.rename(self.directory / 'replaced')
+                media.mkdir()
+                (media / NAME).write_bytes(marker)
+                output.write_bytes(b'finished content')
+            return result
+        with patch('os.read', side_effect=move_during_read):
+            with self.assertRaisesRegex(InvalidData, 'root moved'):
+                current.root.completed(output)
 
     def test_registry_paths_translate_without_changing_logical_references(self):
         logical = copy.deepcopy(self.value)

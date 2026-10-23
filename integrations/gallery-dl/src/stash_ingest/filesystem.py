@@ -1,6 +1,7 @@
 """Reviewed local roots, shared destination locks and flushed final file claims."""
 
 from contextlib import contextmanager
+from abc import ABC, abstractmethod
 import fcntl
 import hashlib
 import os
@@ -11,56 +12,26 @@ from .encoding import InvalidData
 from .publication_lock import PublicationBusy
 
 
-class Root:
-    def __init__(self, path, identity, *, filesystem_id=None):
+class Directory(ABC):
+    """Confined file operations with deployment-specific root verification."""
+
+    def __init__(self, path):
         self.path = Path(path).resolve(strict=True)
-        if (not isinstance(identity, (list, tuple)) or len(identity) != 2
-                or any(type(n) is not int or n < 0 for n in identity)):
-            raise InvalidData("Invalid reviewed directory identity")
-        self.identity = tuple(identity)
-        if filesystem_id is not None and (type(filesystem_id) is not int or not 0 < filesystem_id < 2**64):
-            raise InvalidData("Invalid reviewed filesystem identity")
-        self.filesystem_id = filesystem_id
         self.verify()
 
-    @staticmethod
-    def probe(path):
-        status = Path(path).stat()
-        if not stat.S_ISDIR(status.st_mode):
-            raise InvalidData("Media root is not a directory")
-        return (status.st_dev, status.st_ino)
+    @property
+    @abstractmethod
+    def binding(self):
+        """Opaque comparable binding for profiles sharing one local directory."""
+
+    @abstractmethod
+    def verify_descriptor(self, fd):
+        """Verify the directory actually opened for this operation."""
 
     def verify(self):
         fd = os.open(self.path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             self.verify_descriptor(fd)
-        finally:
-            os.close(fd)
-
-    def verify_descriptor(self, fd):
-        info = os.fstat(fd)
-        valid = (info.st_dev, info.st_ino) == self.identity
-        if self.filesystem_id is not None:
-            valid = info.st_ino == self.identity[1] and self._filesystem_id(fd) == self.filesystem_id
-        if not stat.S_ISDIR(info.st_mode) or not valid:
-            raise InvalidData("Media root changed or its mount is unavailable")
-
-    @staticmethod
-    def _filesystem_id(fd):
-        value = getattr(os.fstatvfs(fd), "f_fsid", 0)
-        if type(value) is not int or not 0 < value < 2**64:
-            raise InvalidData("Filesystem does not expose a persistent identity")
-        return value
-
-    @staticmethod
-    def review(path):
-        """Probe a new/reviewed directory, never silently upgrade an old pin."""
-        path = Path(path).resolve(strict=True)
-        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            info = os.fstat(fd)
-            return {"path": str(path), "identity": [info.st_dev, info.st_ino],
-                    "filesystem_id": Root._filesystem_id(fd)}
         finally:
             os.close(fd)
 
@@ -107,12 +78,67 @@ class Root:
             for directory in reversed(directories):
                 os.fsync(directory)
             self.verify()
+            opened, current_root = os.fstat(directories[0]), os.stat(self.path, follow_symlinks=False)
+            if (opened.st_dev, opened.st_ino) != (current_root.st_dev, current_root.st_ino):
+                raise InvalidData("Output root moved during hashing")
             return relative, before.st_size, sha.hexdigest()
         finally:
             if file is not None:
                 os.close(file)
             for directory in reversed(directories):
                 os.close(directory)
+
+
+class Root(Directory):
+    """Historical inline directory pins; new profiles use storage bindings."""
+
+    def __init__(self, path, identity, *, filesystem_id=None):
+        if (not isinstance(identity, (list, tuple)) or len(identity) != 2
+                or any(type(n) is not int or n < 0 for n in identity)):
+            raise InvalidData("Invalid reviewed directory identity")
+        self.identity = tuple(identity)
+        if filesystem_id is not None and (type(filesystem_id) is not int or not 0 < filesystem_id < 2**64):
+            raise InvalidData("Invalid reviewed filesystem identity")
+        self.filesystem_id = filesystem_id
+        super().__init__(path)
+
+    @property
+    def binding(self):
+        return self.path, self.identity
+
+    @staticmethod
+    def probe(path):
+        status = Path(path).stat()
+        if not stat.S_ISDIR(status.st_mode):
+            raise InvalidData("Media root is not a directory")
+        return (status.st_dev, status.st_ino)
+
+    def verify_descriptor(self, fd):
+        info = os.fstat(fd)
+        valid = (info.st_dev, info.st_ino) == self.identity
+        if self.filesystem_id is not None:
+            valid = info.st_ino == self.identity[1] and self._filesystem_id(fd) == self.filesystem_id
+        if not stat.S_ISDIR(info.st_mode) or not valid:
+            raise InvalidData("Media root changed or its mount is unavailable")
+
+    @staticmethod
+    def _filesystem_id(fd):
+        value = getattr(os.fstatvfs(fd), "f_fsid", 0)
+        if type(value) is not int or not 0 < value < 2**64:
+            raise InvalidData("Filesystem does not expose a persistent identity")
+        return value
+
+    @staticmethod
+    def review(path):
+        """Probe an explicitly reviewed legacy binding; never upgrade a pin."""
+        path = Path(path).resolve(strict=True)
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(fd)
+            return {"path": str(path), "identity": [info.st_dev, info.st_ino],
+                    "filesystem_id": Root._filesystem_id(fd)}
+        finally:
+            os.close(fd)
 
 
 def inherit_filesystem_identity(value, reviewed):

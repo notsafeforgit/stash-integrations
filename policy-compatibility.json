@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "c25c13ee7778920ea78d1397028144c75b07566200d5cf6bac7566be1b99d62b",
+  "implementation_sha256": "d0909bed9626cf2e969d01b09936dd7f45ade8cf2eb7e1c5c6c5aa7bcec049a8",
   "decision": "compatible",
-  "reason": "Separate local storage registries from scrape instructions. Explicit v2 profiles resolve logical root UUIDs through reviewed current bindings, including retained v1 policies, without rewriting saved documents or policy hashes. Missing or mismatched registries pause work without falling back to historical paths; valid retained instructions remain usable when new gallery layers fail. Command rules, coverage, cursors, execution/capture contracts, producer schema 19 and receipts are unchanged. Existing v1 installations retain their inline checks."
+  "reason": "Use application-owned directory UUID markers behind storage bindings instead of persistent OS filesystem numbers, which differ across libc implementations. Explicit setup creates markers atomically; normal work only verifies them and descriptor checks still detect changes during an operation. Retained inline v1 and 0.6.0 filesystem tokens keep their historical semantics. Current registries can supply bindings for saved policies without rewriting bytes or hashes. Command rules, coverage, cursors, execution/capture contracts, producer schema 19 and receipts are unchanged."
 }

@@ -67,8 +67,8 @@ class Runtime:
         first = self.profiles['gallery-dl']
         self.root, self.locks = first.root_uuid, first.locks.path
         for profile in self.profiles.values():
-            if (profile.root_uuid, profile.root.path, profile.root.identity, profile.locks.path, profile.locks.identity) != (
-                    first.root_uuid, first.root.path, first.root.identity, first.locks.path, first.locks.identity):
+            if (profile.root_uuid, profile.root.binding, profile.locks.binding) != (
+                    first.root_uuid, first.root.binding, first.locks.binding):
                 raise InvalidData('Manual profiles must share one media root and lock directory')
         self.policy = source_policy.definition(value['new_source_policy'])
         if self.policy['enabled'] is not True or self.policy['apply_to_scans'] is not False:

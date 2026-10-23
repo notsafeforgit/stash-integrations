@@ -323,7 +323,10 @@ the live command handoff still require the coordinated cutover.
 storage registry. The registry owns mount paths, directory verification and the
 shared publication-lock directory. Its verification tokens are opaque to scrape
 policies. New `stash-gallery setup` installations create `storage.json` once and
-share it between their profiles. Back up that registry alongside the profiles.
+share it between their profiles. New bindings use an application-owned UUID in
+`.stash-storage-id` in each media and lock directory. They do not persist device,
+inode or filesystem numbers, which can vary after reboot or between libc implementations.
+Back up the registry and both marker files alongside the profiles.
 
 Create a registry for an existing deployment with:
 
@@ -332,8 +335,11 @@ stash-ingest-storage --root ROOT_UUID /media/porn \
   --locks /persistent/download-locks --output /private/storage.json
 ```
 
-The command checks existing directories and creates a private file atomically;
-it never overwrites a file, creates a media directory or changes a queue. It
+The command checks existing directories, atomically provisions missing marker
+files and creates a private registry. Markers contain no secrets. It reuses valid
+markers, rejects corrupt ones, and never overwrites a registry, creates a media
+directory or changes a queue. Interrupted setup can be retried with the same
+directories; workers only verify markers and never provision replacements. It
 prints the registry UUID to use in profile references. Multiple `--root UUID PATH`
 arguments share one publication-lock directory. Host/container bindings can have
 different local paths but must identify the same roots and physical locks.
@@ -344,6 +350,12 @@ switch the registry atomically. `--uuid` can prepare the reviewed replacement in
 a new file. Moving a worker mount does not move files or update Stash's own local
 binding. Registry UUIDs and root UUIDs are checked separately; a missing registry,
 unknown root or changed directory stops work without falling back to old paths.
+Preserve the marker with its directory when moving or restoring storage. A copied
+marker identifies the same logical storage; do not use cloned lock directories
+for concurrently running workers. Low-level descriptor checks remain confined to
+detecting file or directory changes within an operation. Existing inline v1 and
+0.6.0 filesystem-token bindings retain their strict historical checks until an
+explicit registry review replaces them.
 
 The v2 profile's required keys are `schema`, `root`, `storage`, `gallery` and
 `bindings`. Its registry reference contains a path and UUID, and `root` contains

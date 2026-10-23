@@ -156,7 +156,6 @@ def prepare(directory, endpoint, root, media, configs, key_env):
     """Finish local validation before creating server credentials. Retry in place."""
     endpoint, root = origin(endpoint), identifier(root)
     media = Path(media).expanduser().resolve(strict=True)
-    root_binding = Root.review(media)
     if directory.is_relative_to(media) or media.is_relative_to(directory):
         raise InvalidData('Keep worker state and the media folder in separate directories')
     files = [str(Path(path).expanduser().resolve(strict=True)) for path in configs]
@@ -191,12 +190,15 @@ def prepare(directory, endpoint, root, media, configs, key_env):
     }})
     profiles = {}
     storage = None
+    root_binding = None
     if state.get('storage_registry'):
         registry_path = directory / 'storage.json'
         if not registry_path.exists():
             publish_profile(registry_path, review_storage({root: media}, directory / 'locks', registry_uuid=state['uuid']))
         storage = StorageBindings.load({'path': str(registry_path), 'uuid': state['uuid']}, directory)
         storage.bind(root)
+    else:
+        root_binding = Root.review(media)
     for adapter, filename in (('gallery-dl', 'gallery-worker.json'), ('yt-dlp', 'ytdlp-worker.json')):
         local = ({'root': {'uuid': root}, 'storage': storage.reference} if storage else
                  {'root': {'uuid': root, **root_binding}, 'locks': Root.review(directory / 'locks')})

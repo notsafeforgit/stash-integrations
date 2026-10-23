@@ -9,12 +9,12 @@ import argparse
 import copy
 import os
 from pathlib import Path
-import re
 import sys
 import uuid
 
 from .encoding import InvalidData, decode, identifier
-from .filesystem import Root
+from .retained_storage import registry_directory
+from .storage_marker import MarkedDirectory, provision
 
 SCHEMA = "stash-storage-bindings-v1"
 LIMIT = 1 << 20
@@ -33,19 +33,20 @@ def read_document(path):
 
 
 def review_directory(path):
-    reviewed = Root.review(path)
-    return {"path": reviewed["path"],
-            "token": f'fs-v1:{reviewed["filesystem_id"]:x}:{reviewed["identity"][1]:x}'}
+    path = Path(path).resolve(strict=True)
+    return {"path": str(path), "token": 'marker-v1:' + provision(path)}
 
 
 def directory(value, base, path_resolver=local_path):
     if not isinstance(value, dict) or set(value) != {"path", "token"}:
         raise InvalidData("Invalid local storage binding")
     token = value["token"]
-    if not isinstance(token, str) or not re.fullmatch(r"fs-v1:[1-9a-f][0-9a-f]{0,15}:(?:0|[1-9a-f][0-9a-f]{0,15})", token):
+    if not isinstance(token, str):
         raise InvalidData("Unknown storage verification token")
-    _, filesystem, inode = token.split(":")
-    return Root(path_resolver(value["path"], base), (0, int(inode, 16)), filesystem_id=int(filesystem, 16))
+    path = path_resolver(value["path"], base)
+    if token.startswith('marker-v1:'):
+        return MarkedDirectory(path, token.removeprefix('marker-v1:'))
+    return registry_directory(path, token)
 
 
 class StorageBindings:
@@ -84,15 +85,21 @@ class StorageBindings:
         return (directory(self.document["roots"][root_uuid], base, self.path_resolver),
                 directory(self.document["locks"], base, self.path_resolver))
 
+    def verification_files(self, root_uuid):
+        """Small identity files that must accompany configuration in backups."""
+        return [bound.verification_file for bound in self.bind(root_uuid) if isinstance(bound, MarkedDirectory)]
+
 
 def review(roots, locks, *, registry_uuid=None):
-    """Build local deployment configuration; never change a profile or queue."""
-    value = {"schema": SCHEMA, "uuid": identifier(registry_uuid or str(uuid.uuid4())),
-             "roots": {identifier(key): review_directory(path) for key, path in roots.items()},
-             "locks": review_directory(locks)}
-    if not 1 <= len(value["roots"]) <= 256:
+    """Provision directory markers and build configuration; never change a queue."""
+    if not 1 <= len(roots) <= 256:
         raise InvalidData("Storage registry needs between one and 256 roots")
-    return value
+    registry_uuid = identifier(registry_uuid or str(uuid.uuid4()))
+    for key in roots:
+        identifier(key)
+    return {"schema": SCHEMA, "uuid": registry_uuid,
+            "roots": {key: review_directory(path) for key, path in roots.items()},
+            "locks": review_directory(locks)}
 
 
 def main(argv=None):
