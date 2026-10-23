@@ -9,9 +9,10 @@ import re
 import sys
 import tempfile
 
-from .configuration import (ASSET_LIMIT, SCHEMA, LAYERED_SCHEMA, Configuration, _access_option, _asset,
+from .configuration import (ASSET_LIMIT, SCHEMA, LAYERED_SCHEMA, STORAGE_SCHEMA, STORAGE_LAYERED_SCHEMA, Configuration, _access_option, _asset,
                             _json_file, _path, private_arguments, profile_bytes)
-from .encoding import InvalidData, digest, encode
+from .encoding import InvalidData, digest, encode, identifier
+from .storage import StorageBindings
 
 
 def pointer(parts):
@@ -64,7 +65,7 @@ class Converter:
     """Preserve effective JSON order and private-value provenance across layers."""
 
     def __init__(self, filenames, root, locks, *, working_directory=None, assets=(), category=None,
-                 read_document=_json_file, local_path=None):
+                 read_document=_json_file, local_path=None, storage=None):
         if not 1 <= len(filenames) <= 16:
             raise InvalidData("Choose one to sixteen ordered gallery-dl JSON files")
         # Inventory may be resolving a container cwd that has no host mount.
@@ -72,14 +73,23 @@ class Converter:
         # not itself exist on the inventory host. Execution still requires it.
         self.working = Path(working_directory or os.getcwd()).resolve(strict=local_path is None)
         self.resolve_local_path = local_path
-        self.root_uuid, self.root = Configuration._root(root, self.working, media=True)
-        _, self.locks = Configuration._root(locks, self.working, media=False)
-        self.root_definition = {"uuid": self.root_uuid, "path": str(self.root.path), "identity": list(self.root.identity)}
-        if self.root.filesystem_id is not None:
-            self.root_definition["filesystem_id"] = self.root.filesystem_id
-        self.lock_definition = {"path": str(self.locks.path), "identity": list(self.locks.identity)}
-        if self.locks.filesystem_id is not None:
-            self.lock_definition["filesystem_id"] = self.locks.filesystem_id
+        self.storage = storage
+        if storage is not None:
+            if not isinstance(root, dict) or set(root) != {"uuid"}:
+                raise InvalidData("Worker root must be a logical UUID")
+            self.root_uuid = identifier(root["uuid"])
+            self.root, self.locks = storage.bind(self.root_uuid)
+            self.root_definition = {"uuid": self.root_uuid}
+            self.lock_definition = None
+        else:
+            self.root_uuid, self.root = Configuration._root(root, self.working, media=True)
+            _, self.locks = Configuration._root(locks, self.working, media=False)
+            self.root_definition = {"uuid": self.root_uuid, "path": str(self.root.path), "identity": list(self.root.identity)}
+            if self.root.filesystem_id is not None:
+                self.root_definition["filesystem_id"] = self.root.filesystem_id
+            self.lock_definition = {"path": str(self.locks.path), "identity": list(self.locks.identity)}
+            if self.locks.filesystem_id is not None:
+                self.lock_definition["filesystem_id"] = self.locks.filesystem_id
         self.explicit_assets = {_path(str(path), self.working) for path in assets}
         self.bindings = {}
         self.removed = []
@@ -291,8 +301,12 @@ class Converter:
         gallery = self.walk(self.settings)
         if "base-directory" not in gallery.get("extractor", {}):
             raise InvalidData("Conversion requires an explicit extractor base directory")
-        result = {"schema": SCHEMA, "root": self.root_definition, "locks": self.lock_definition,
+        result = {"schema": STORAGE_SCHEMA if self.storage else SCHEMA, "root": self.root_definition,
                   "gallery": gallery, "bindings": self.bindings}
+        if self.storage:
+            result["storage"] = self.storage.reference
+        else:
+            result["locks"] = self.lock_definition
         if self.category is not None:
             result["source_category"] = self.category
         profile_bytes(result)
@@ -310,26 +324,31 @@ def resolve_layers(value, base, *, path_resolver=_path, read_document=_json_file
     Inventory can translate container paths and conservatively inspect all
     configured extractors without requiring the gallery-dl runtime (scope=False).
     """
-    required = {"schema", "root", "locks", "config_files"}
+    portable = isinstance(value, dict) and value.get("schema") == STORAGE_LAYERED_SCHEMA
+    required = {"schema", "root", "storage" if portable else "locks", "config_files"}
     optional = {"working_directory", "assets", "source_category", "source_mode", "source_adapter", "scan_mode", "full_history"}
     if (not isinstance(value, dict) or not required <= value.keys() or value.keys() - required - optional
-            or value["schema"] != LAYERED_SCHEMA or not isinstance(value["config_files"], list)
+            or value["schema"] not in (LAYERED_SCHEMA, STORAGE_LAYERED_SCHEMA) or not isinstance(value["config_files"], list)
             or not 1 <= len(value["config_files"]) <= 16
             or type(value.get("full_history", False)) is not bool
             or not isinstance(value.get("assets", []), list) or len(value.get("assets", [])) > 64):
         raise InvalidData("Invalid layered gallery-dl worker configuration")
     working = path_resolver(value.get("working_directory", str(base)), base)
-    root, locks = copy.deepcopy(value["root"]), copy.deepcopy(value["locks"])
-    for directory in (root, locks):
-        if not isinstance(directory, dict) or "path" not in directory:
-            raise InvalidData("Layered worker requires a root and lock directory")
-        directory["path"] = str(path_resolver(directory["path"], base))
+    storage = None
+    root, locks = copy.deepcopy(value["root"]), copy.deepcopy(value.get("locks"))
+    if portable:
+        storage = StorageBindings.load(value["storage"], base, path_resolver=path_resolver, read_document=read_document)
+    else:
+        for directory in (root, locks):
+            if not isinstance(directory, dict) or "path" not in directory:
+                raise InvalidData("Layered worker requires a root and lock directory")
+            directory["path"] = str(path_resolver(directory["path"], base))
     converter = Converter([path_resolver(name, base) for name in value["config_files"]], root, locks,
                           working_directory=working,
                           assets=[path_resolver(name, base) for name in value.get("assets", [])],
                           category=value.get("source_category") if scope else None,
                           read_document=read_document,
-                          local_path=None if path_resolver is _path else path_resolver)
+                          local_path=None if path_resolver is _path else path_resolver, storage=storage)
     result = converter.convert()
     for key in ("source_category", "source_mode", "source_adapter", "scan_mode"):
         if key in value:
@@ -363,10 +382,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", action="append", required=True, help="Ordered existing JSON layer; may be repeated")
     parser.add_argument("--root", required=True, help="Reviewed native media-root UUID")
-    parser.add_argument("--root-path", required=True)
-    parser.add_argument("--root-identity", nargs=2, type=int, required=True, metavar=("DEVICE", "INODE"))
-    parser.add_argument("--locks", required=True)
-    parser.add_argument("--lock-identity", nargs=2, type=int, required=True, metavar=("DEVICE", "INODE"))
+    parser.add_argument("--storage", help="Reviewed local storage registry; use with --root")
+    parser.add_argument("--root-path", help="Retained v1 inline binding")
+    parser.add_argument("--root-identity", nargs=2, type=int, metavar=("DEVICE", "INODE"))
+    parser.add_argument("--locks", help="Retained v1 inline lock binding")
+    parser.add_argument("--lock-identity", nargs=2, type=int, metavar=("DEVICE", "INODE"))
     parser.add_argument("--working-directory", default=os.getcwd(), help="Original gallery-dl working directory")
     parser.add_argument("--asset", action="append", default=[], help="Additional local exec helper to fingerprint")
     parser.add_argument("--category", help="Scope settings and helper definitions to one root extractor category")
@@ -380,9 +400,20 @@ def main(argv=None):
     parser.add_argument("--output", required=True, help="New, inactive profile file; must not exist")
     args = parser.parse_args(argv)
     try:
-        converter = Converter(args.config, {"uuid": args.root, "path": args.root_path, "identity": args.root_identity},
-                              {"path": args.locks, "identity": args.lock_identity}, working_directory=args.working_directory,
-                              assets=args.asset, category=args.category)
+        if args.storage:
+            if any(value is not None for value in (args.root_path, args.root_identity, args.locks, args.lock_identity)):
+                raise InvalidData("Choose a storage registry or retained inline bindings")
+            filename = Path(args.storage).resolve(strict=True)
+            storage = StorageBindings(_json_file(filename), filename)
+            root, locks = {"uuid": args.root}, None
+        else:
+            if any(value is None for value in (args.root_path, args.root_identity, args.locks, args.lock_identity)):
+                raise InvalidData("Choose --storage; retained v1 conversion requires all four directory arguments")
+            storage = None
+            root = {"uuid": args.root, "path": args.root_path, "identity": args.root_identity}
+            locks = {"path": args.locks, "identity": args.lock_identity}
+        converter = Converter(args.config, root, locks, working_directory=args.working_directory,
+                              assets=args.asset, category=args.category, storage=storage)
         value = converter.convert()
         value['source_mode'] = args.source_mode
         value['source_adapter'] = args.source_adapter
@@ -390,7 +421,8 @@ def main(argv=None):
             value["gallery"]["skip"] = True
         value['scan_mode'] = args.scan_mode
         if args.layered:
-            value = {"schema": LAYERED_SCHEMA, "root": value["root"], "locks": value["locks"],
+            local = {"storage": value["storage"]} if storage else {"locks": value["locks"]}
+            value = {"schema": STORAGE_LAYERED_SCHEMA if storage else LAYERED_SCHEMA, "root": value["root"], **local,
                      "config_files": [str(Path(name).resolve(strict=True)) for name in args.config],
                      "working_directory": str(converter.working), "source_mode": args.source_mode,
                      "source_adapter": args.source_adapter, "scan_mode": args.scan_mode,

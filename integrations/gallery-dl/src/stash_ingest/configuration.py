@@ -12,11 +12,14 @@ import threading
 
 from .encoding import InvalidData, decode, digest, encode, identifier
 from .events import sha256
-from .filesystem import Root, inherit_filesystem_identity
+from .retained_storage import inline_bindings, inline_root
+from .storage import StorageBindings
 from .runtime import CAPTURE_VERSION, EXECUTION_CONTRACT, downloader_identity, implementation_identity
 
 SCHEMA = "stash-gallery-worker-v1"
 LAYERED_SCHEMA = "stash-gallery-worker-layers-v1"
+STORAGE_SCHEMA = "stash-gallery-worker-v2"
+STORAGE_LAYERED_SCHEMA = "stash-gallery-worker-layers-v2"
 CONFIG_LIMIT = 1 << 20
 ASSET_LIMIT = 4 << 20
 REFERENCE = re.compile(r"\$\{stash:([a-z][a-z0-9_]{0,63})\}")
@@ -147,20 +150,36 @@ class Configuration:
         self.filename = filename
         self._initialize(_json_file(filename), filename.parent)
 
+    @staticmethod
+    def profile_storage(filename):
+        """Read deployment bindings even if a new gallery policy is broken.
+
+        An unavailable registry must never fall back to historical directories.
+        Missing gallery layers may still use their already retained instructions.
+        """
+        filename = Path(filename).resolve(strict=True)
+        value = _json_file(filename)
+        if isinstance(value, dict) and value.get("schema") in (STORAGE_SCHEMA, STORAGE_LAYERED_SCHEMA):
+            return StorageBindings.load(value.get("storage"), filename.parent)
+        if isinstance(value, dict) and "storage" in value:
+            raise InvalidData("Unknown storage profile schema")
+        return None
+
     @classmethod
-    def from_document(cls, value, base_directory, *, directory_bindings=None):
+    def from_document(cls, value, base_directory, *, directory_bindings=None, storage=None):
         encode(value, CONFIG_LIMIT)
         result = cls.__new__(cls)
-        result._initialize(copy.deepcopy(value), Path(base_directory).resolve(strict=True), directory_bindings=directory_bindings)
+        result._initialize(copy.deepcopy(value), Path(base_directory).resolve(strict=True), directory_bindings=directory_bindings, storage=storage)
         return result
 
-    def _initialize(self, value, base, *, directory_bindings=None):
-        if isinstance(value, dict) and value.get("schema") == LAYERED_SCHEMA:
+    def _initialize(self, value, base, *, directory_bindings=None, storage=None):
+        if isinstance(value, dict) and value.get("schema") in (LAYERED_SCHEMA, STORAGE_LAYERED_SCHEMA):
             from .config_migration import resolve_layers
             value = resolve_layers(value, base)
-        required = {"schema", "root", "locks", "gallery", "bindings"}
+        portable = isinstance(value, dict) and value.get("schema") == STORAGE_SCHEMA
+        required = {"schema", "root", "gallery", "bindings", "storage" if portable else "locks"}
         if (not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"source_category", "source_mode", "source_adapter", "scan_mode"}
-                or value["schema"] != SCHEMA or not isinstance(value["gallery"], dict)
+                or value["schema"] not in (SCHEMA, STORAGE_SCHEMA) or not isinstance(value["gallery"], dict)
                 or not isinstance(value["bindings"], dict) or len(value["bindings"]) > 64):
             raise InvalidData("Invalid native gallery-dl worker configuration")
         self.source_category = value.get("source_category")
@@ -176,9 +195,28 @@ class Configuration:
             raise InvalidData('Invalid worker scan mode')
         if self.source_adapter not in ('gallery-dl', 'yt-dlp'):
             raise InvalidData('Invalid worker source adapter')
-        reviewed = directory_bindings or {}
-        self.root_uuid, self.root = self._root(inherit_filesystem_identity(value["root"], reviewed.get("root")), base, media=True)
-        _, self.locks = self._root(inherit_filesystem_identity(value["locks"], reviewed.get("locks")), base, media=False)
+        if storage is not None and not isinstance(storage, StorageBindings):
+            raise InvalidData("Invalid local storage registry")
+        if storage is not None and directory_bindings is not None:
+            raise InvalidData("Choose a storage registry or retained inline bindings")
+        self.storage = storage
+        if portable:
+            if not isinstance(value["root"], dict) or set(value["root"]) != {"uuid"}:
+                raise InvalidData("Worker root must be a logical UUID")
+            if directory_bindings is not None:
+                raise InvalidData("Registry profiles cannot use inline directory bindings")
+            if self.storage is None:
+                self.storage = StorageBindings.load(value["storage"], base)
+            elif (not isinstance(value["storage"], dict) or set(value["storage"]) != {"path", "uuid"}
+                  or value["storage"]["uuid"] != self.storage.uuid):
+                raise InvalidData("Saved policy belongs to a different storage registry")
+        if self.storage is not None:
+            if not isinstance(value["root"], dict):
+                raise InvalidData("Invalid worker root")
+            self.root_uuid = identifier(value["root"].get("uuid"))
+            self.root, self.locks = self.storage.bind(self.root_uuid)
+        else:
+            self.root_uuid, self.root, self.locks = inline_bindings(value, base, reviewed=directory_bindings, path_resolver=_path)
         assets = self._bindings(value["bindings"], base, values={"media_root": str(self.root.path)}, kinds={"media_root": "path"})
         self._gallery = self._expand(value["gallery"])
         self._validate(self._gallery)
@@ -186,6 +224,9 @@ class Configuration:
         # still rotate access credentials without changing a queued run's rules.
         self.document, self.base = copy.deepcopy(value), base
         self.compatibility = policy_identity()
+        # The profile format and local storage registry are not scrape policy.
+        # Both profile versions execute the same v1 download contract; changing
+        # only their storage representation must keep admitted policy hashes.
         self.policy_sha256 = digest(encode({"version": SCHEMA, "operation": "download",
                                            "source_category": self.source_category,
                                            "source_mode": self.source_mode,
@@ -239,13 +280,7 @@ class Configuration:
 
     @staticmethod
     def _root(value, base, *, media):
-        fields = {"path", "identity", "uuid"} if media else {"path", "identity"}
-        if (not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - {"filesystem_id"} or not isinstance(value["identity"], list)
-                or len(value["identity"]) != 2 or any(type(n) is not int or n < 0 for n in value["identity"])):
-            raise InvalidData("Worker directories require reviewed device/inode identities")
-        if "filesystem_id" in value and value["filesystem_id"] is None:
-            raise InvalidData("Invalid reviewed filesystem identity")
-        return (identifier(value["uuid"]) if media else None), Root(_path(value["path"], base), value["identity"], filesystem_id=value.get("filesystem_id"))
+        return inline_root(value, base, media=media, path_resolver=_path)
 
     def _expand(self, value, *, access=False):
         if isinstance(value, dict):

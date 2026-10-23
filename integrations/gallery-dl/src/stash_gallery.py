@@ -21,7 +21,8 @@ import uuid
 from stash_ingest.application_key import application_key
 from stash_ingest.client import Client, NoRedirect, Unavailable
 from stash_ingest.config_migration import publish_profile
-from stash_ingest.configuration import Configuration, LAYERED_SCHEMA, runtime_identity
+from stash_ingest.configuration import Configuration, LAYERED_SCHEMA, STORAGE_LAYERED_SCHEMA, runtime_identity
+from stash_ingest.storage import StorageBindings, review as review_storage
 from stash_ingest.encoding import InvalidData, decode, encode, identifier
 from stash_ingest.endpoint import origin
 from stash_ingest.filesystem import Root
@@ -166,7 +167,7 @@ def prepare(directory, endpoint, root, media, configs, key_env):
         if state.get('schema') != FORMAT or state.get('options') != options:
             raise InvalidData('This directory already belongs to a different setup; its queue has been preserved')
     else:
-        state = {'schema': FORMAT, 'uuid': str(uuid.uuid4()), 'options': options}
+        state = {'schema': FORMAT, 'uuid': str(uuid.uuid4()), 'options': options, 'storage_registry': True}
         publish_profile(path, state)
 
     def save():
@@ -189,10 +190,17 @@ def prepare(directory, endpoint, root, media, configs, key_env):
         'skip': True, 'ytdl': {'module': 'yt_dlp'},
     }})
     profiles = {}
+    storage = None
+    if state.get('storage_registry'):
+        registry_path = directory / 'storage.json'
+        if not registry_path.exists():
+            publish_profile(registry_path, review_storage({root: media}, directory / 'locks', registry_uuid=state['uuid']))
+        storage = StorageBindings.load({'path': str(registry_path), 'uuid': state['uuid']}, directory)
+        storage.bind(root)
     for adapter, filename in (('gallery-dl', 'gallery-worker.json'), ('yt-dlp', 'ytdlp-worker.json')):
-        value = {'schema': LAYERED_SCHEMA,
-                 'root': {'uuid': root, **root_binding},
-                 'locks': Root.review(directory / 'locks'),
+        local = ({'root': {'uuid': root}, 'storage': storage.reference} if storage else
+                 {'root': {'uuid': root, **root_binding}, 'locks': Root.review(directory / 'locks')})
+        value = {'schema': STORAGE_LAYERED_SCHEMA if storage else LAYERED_SCHEMA, **local,
                  'config_files': [str(defaults), *files], 'working_directory': str(directory),
                  'source_mode': 'traversal', 'source_adapter': adapter, 'scan_mode': 'initial'}
         # All invalid config/asset/private references fail before registration.

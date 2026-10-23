@@ -15,8 +15,8 @@ class EnrichmentConfiguration(Configuration):
     operation = "post.enrich"
     categories = POSTS
 
-    def _initialize(self, value, base, *, directory_bindings=None):
-        if directory_bindings is not None:
+    def _initialize(self, value, base, *, directory_bindings=None, storage=None):
+        if directory_bindings is not None or storage is not None:
             raise InvalidData("Metadata-only profiles do not have directory bindings")
         if (not isinstance(value, dict) or set(value) != {"schema", "source_category", "gallery", "bindings"}
                 or value["schema"] != self.schema or not isinstance(value["gallery"], dict)

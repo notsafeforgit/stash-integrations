@@ -319,26 +319,35 @@ the live command handoff still require the coordinated cutover.
 
 ## Worker profiles and execution
 
-Directory bindings can include a reviewed, nonzero `filesystem_id` from
-`os.fstatvfs` alongside their original `identity: [device, inode]`. New
-`stash-gallery setup` configurations record it automatically. This identifies the
-filesystem independently of Linux's device number allocation after a reboot;
-the directory inode is still checked through its open descriptor. Replaced
-filesystems and directories remain errors. Legacy bindings without that proof
-retain their strict device/inode check.
+`stash-gallery-worker-v2` profiles name a logical media-root UUID and a local
+storage registry. The registry owns mount paths, directory verification and the
+shared publication-lock directory. Its verification tokens are opaque to scrape
+policies. New `stash-gallery setup` installations create `storage.json` once and
+share it between their profiles. Back up that registry alongside the profiles.
 
-To upgrade an existing binding after a device-number change, first confirm the
-original filesystem and directory, then add its filesystem ID to the reviewed
-profile while retaining the original path, UUID and device/inode pair. This is
-an explicit deployment review, never an automatic guess after a mismatch.
-Retained policies may use this added proof only when those original binding
-fields match exactly. Their saved documents, hashes, scrape rules, request IDs,
-windows and cursors remain unchanged; no queue reset or schema change is needed.
-Backup inventory uses the same rule for retained profile dependencies.
+Create a registry for an existing deployment with:
 
-A `stash-gallery-worker-v1` JSON profile separates portable gallery-dl settings
-from deployment paths and local website-access references. Its five required
-keys are `schema`, `root`, `locks`, `gallery` and `bindings`. Optional
+```sh
+stash-ingest-storage --root ROOT_UUID /media/porn \
+  --locks /persistent/download-locks --output /private/storage.json
+```
+
+The command checks existing directories and creates a private file atomically;
+it never overwrites a file, creates a media directory or changes a queue. It
+prints the registry UUID to use in profile references. Multiple `--root UUID PATH`
+arguments share one publication-lock directory. Host/container bindings can have
+different local paths but must identify the same roots and physical locks.
+
+Changing a binding requires an explicit deployment review. Keep the registry UUID,
+stop every writer sharing its locks, validate the replacement directories and
+switch the registry atomically. `--uuid` can prepare the reviewed replacement in
+a new file. Moving a worker mount does not move files or update Stash's own local
+binding. Registry UUIDs and root UUIDs are checked separately; a missing registry,
+unknown root or changed directory stops work without falling back to old paths.
+
+The v2 profile's required keys are `schema`, `root`, `storage`, `gallery` and
+`bindings`. Its registry reference contains a path and UUID, and `root` contains
+only the existing Stash root UUID. Optional
 `source_category` restricts the root extractor; a mismatch stops before extraction.
 `source_adapter` selects `gallery-dl` (default) or the explicit `yt-dlp` bridge
 and participates in the policy digest. The latter preserves gallery-dl's
@@ -347,10 +356,10 @@ and participates in the policy digest. The latter preserves gallery-dl's
 
 ```json
 {
-  "schema": "stash-gallery-worker-v1",
+  "schema": "stash-gallery-worker-v2",
   "source_category": "reddit",
-  "root": {"uuid": "REVIEWED_ROOT_UUID", "path": "/media/porn", "identity": [0, 0]},
-  "locks": {"path": "/persistent/download-locks", "identity": [0, 0]},
+  "root": {"uuid": "REVIEWED_ROOT_UUID"},
+  "storage": {"path": "/private/storage.json", "uuid": "STORAGE_REGISTRY_UUID"},
   "gallery": {
     "extractor": {
       "base-directory": "${stash:media_root}",
@@ -372,13 +381,20 @@ and participates in the policy digest. The latter preserves gallery-dl's
 }
 ```
 
-This is a template, not an installable configuration. Provision the native root
-UUID and review each existing directory's device/inode pair using
-`filesystem.Root.probe` before filling `identity`; `[0, 0]` is a placeholder.
+This template requires the existing Stash root UUID and the created registry UUID.
 Use the actual shared lock directory and existing archive/path rules when
 converting a deployment. The directory produced by gallery-dl must fit the
 claimed collection's path prefix. Root and lock identities are checked again
-at source boundaries; a replacement mount stops further work.
+at source boundaries inside the storage adapter; a replacement mount stops further work.
+
+Retained v1 profiles remain readable in `retained_storage.py`. With an explicitly
+selected v2 profile, the dispatcher resolves their logical root UUID through the
+current registry without modifying frozen documents or policy hashes. Existing
+requests, coverage, cursors, producer schema 19 and receipts remain unchanged.
+A broken new gallery layer can still run retained instructions with current
+storage. An unreadable profile or unavailable registry pauses execution. A v1
+installation without a registry keeps its historical strict inline checks,
+including any previously reviewed `filesystem_id`; it is never silently upgraded.
 
 `path` bindings relocate archives and other local files without changing policy
 identity. `asset` bindings add `path` and a reviewed `sha256` for local helper
@@ -401,7 +417,7 @@ stay in worker memory and gallery-dl; they are not sent to Stash or copied into
 the outbox. The Stash API token still uses the separate `--token-env` option.
 
 The policy SHA-256 includes the portable gallery configuration, reviewed asset
-digests, the native capture contract and adapter source digest. It
+digests and the versioned execution/capture contracts. It
 excludes private values, local binding paths, directory identities and the
 requested run window. Equivalent host/container profiles therefore share a
 policy; rotating cookies does not create a new policy. Changing extraction or
@@ -446,8 +462,8 @@ order as gallery-dl: the shared config first, then environment/site overrides.
 Objects merge recursively; lists and scalar values replace earlier values.
 Conditional filename/directory maps retain their order.
 
-For example, a `stash-gallery-worker-layers-v1` profile contains the normal
-`root` and `locks` declarations plus:
+For example, a `stash-gallery-worker-layers-v2` profile contains the normal
+logical `root` and `storage` reference plus:
 
 ```json
 {
@@ -702,8 +718,8 @@ Saved worker policies and producer schema 19 remain unchanged.
 ## Converting existing gallery-dl settings
 
 `stash-ingest-config` reads ordered JSON config layers and writes a **new,
-inactive** worker profile. It requires the reviewed root UUID, media/lock paths
-and device/inode identities. It does not register a root, contact a website,
+inactive** worker profile. It requires the reviewed root UUID and local storage
+registry. It does not register a root, contact a website,
 start downloading, rewrite the input files or activate a launcher.
 
 ```sh
@@ -711,8 +727,7 @@ stash-ingest-config \
   --config /private/gallery-dl/config.json \
   --config /private/gallery-dl/worker-overrides.json \
   --category reddit \
-  --root ROOT_UUID --root-path /media/porn --root-identity DEVICE INODE \
-  --locks /persistent/download-locks --lock-identity DEVICE INODE \
+  --root ROOT_UUID --storage /private/storage.json \
   --working-directory /media/porn \
   --output /persistent/profiles/reddit.json
 ```

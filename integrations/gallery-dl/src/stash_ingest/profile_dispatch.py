@@ -15,7 +15,14 @@ class ProfileDispatcher:
         saved = Configurations(self.box)
         current, unavailable = None, False
         try:
+            storage = Configuration.profile_storage(self.filename)
+        except (OSError, InvalidData):
+            return {"state": "unavailable", "error_code": "worker_profile_unavailable"}
+        try:
             current = Configuration(self.filename)
+            if ((current.storage is None) != (storage is None)
+                    or (storage is not None and current.storage.document != storage.document)):
+                return {"state": "unavailable", "error_code": "worker_profile_unavailable"}
             saved.remember(current)
         except (OSError, InvalidData, Capacity):
             # Broken new settings must not strand independently valid old work.
@@ -29,7 +36,10 @@ class ProfileDispatcher:
                 continue
             saved.visited(row)  # Rotate before execution, including process death.
             try:
-                profile = saved.load(row, directory_bindings=current.document if current is not None else None)
+                if storage is not None:
+                    profile = saved.load(row, storage=storage)
+                else:
+                    profile = saved.load(row, directory_bindings=current.document if current is not None else None)
                 result = Dispatcher(self.box, self.client, profile).once()
             except (OSError, InvalidData):
                 unavailable = True
