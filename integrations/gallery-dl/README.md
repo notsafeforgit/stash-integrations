@@ -276,7 +276,7 @@ missing saved cursor cannot report successful traversal. The worker entry point
 below supplies configuration, heartbeat, event delivery and attempt outcomes;
 production launcher conversion remains separate work.
 Attachment adapters cover Reddit, Twitter, Instagram, Coomer, Kemono, Bluesky,
-TikTok, Tumblr, the Chevereto sites JPGfish/Imglike/Putmega, LeakGallery, and
+TikTok, Tumblr, the Chevereto sites JPGfish/Imglike/Putmega, LeakGallery, Erome, and
 resolved yt-dlp videos. Publication windows require a usable source timestamp;
 configured traversal profiles also handle undated sources and collection routing.
 The direct host `gallery-dl` command still uses legacy hooks. Its native command
@@ -3476,6 +3476,19 @@ manifest, but an HTML scan does not establish complete membership or an album.
 API pagination failures now fail the native attempt even when the pinned
 extractor catches and logs the underlying error. Its earlier completed files
 and receipts remain durable for retry.
+
+Erome album URLs use the explicit `album_id`, album title and observed photo/video
+order. The adapter copies each file's metadata before the extractor mutates its
+shared dictionary, then captures one bounded, shared manifest. HTML membership
+stays partial, and its media-URL timestamp is not a publication date; use a
+traversal profile. Uploader names do not assign performers. Native archive keys
+use `native-v1_{album_id}_{web_media_id}` where `web_media_id` is the canonical
+source URL digest. Reordering cannot archive a different file by position.
+Custom archive formats must contain `{web_media_id}`. Existing position-based
+entries are preserved but cannot prove completion for this native adapter.
+The existing durable manual request and outbox support interrupted retries;
+`stash-gallery download https://www.erome.com/a/<album-id>` needs no separate
+scraper or database migration.
 
 These adapters use version-1 `web_media` evidence and URL-qualified attachment
 references, independently of local filenames and gallery-dl's output counters.

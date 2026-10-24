@@ -9,5 +9,14 @@
     "scripts/backfill_catalog_associations.py",
     "scripts/split_worker_profiles.py"
   ],
-  "fixtures": "pkg/ contains versioned test fixtures only; the canonical schema and APIs remain in Stash."
+  "fixtures": "pkg/ contains versioned test fixtures only; the canonical schema and APIs remain in Stash.",
+  "fixture_updates": [
+    {
+      "revision": "12725dce14f97d550f15c0d1d2ab61165a303c3c",
+      "paths": [
+        "pkg/archive/testdata/captured-web-media-v1.json"
+      ],
+      "reason": "Shared native Erome album identity and ordered partial membership contract fixtures."
+    }
+  ]
 }

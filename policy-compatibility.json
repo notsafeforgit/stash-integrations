@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "d0909bed9626cf2e969d01b09936dd7f45ade8cf2eb7e1c5c6c5aa7bcec049a8",
+  "implementation_sha256": "6cfb19bf671f80ea2c0681dea1108712c98978811bf84d3aa7b9fc37dbf5dcaa",
   "decision": "compatible",
-  "reason": "Use application-owned directory UUID markers behind storage bindings instead of persistent OS filesystem numbers, which differ across libc implementations. Explicit setup creates markers atomically; normal work only verifies them and descriptor checks still detect changes during an operation. Retained inline v1 and 0.6.0 filesystem tokens keep their historical semantics. Current registries can supply bindings for saved policies without rewriting bytes or hashes. Command rules, coverage, cursors, execution/capture contracts, producer schema 19 and receipts are unchanged."
+  "reason": "Add native Erome album intake, previously unsupported: explicit album identity, partial ordered web_media membership, per-URL attachment/archive identity, and traversal-only timestamps. Existing source adapters, capture/execution contracts, queued policies, producer schema 19, receipts and archive entries retain their semantics. Erome position-based keys are preserved but never used as native completion proof. Shared contract fixtures and real pinned extractor tests cover ordering, failed-file retry and invalid evidence."
 }

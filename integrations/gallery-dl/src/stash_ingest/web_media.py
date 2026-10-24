@@ -5,6 +5,7 @@ Only Tumblr's explicit photos list and Chevereto's single-file page establish
 complete membership. An HTML scan or extractor output count cannot do that.
 """
 
+import copy
 import hashlib
 import re
 import types
@@ -13,7 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .encoding import InvalidData
 
 FIELD = 'web_media'
-CATEGORIES = ('tumblr', 'jpgfish', 'imglike', 'putmega', 'leakgallery')
+CATEGORIES = ('tumblr', 'jpgfish', 'imglike', 'putmega', 'leakgallery', 'erome')
 
 
 def reference(value):
@@ -37,7 +38,11 @@ def reference(value):
 
 def post(data, category):
     from .source import _agree, _id, _numeric
-    if category == 'tumblr':
+    if category == 'erome':
+        value = _id(data.get('album_id'))
+        if not re.fullmatch(r'[A-Za-z0-9_]{1,256}', value):
+            raise InvalidData('Erome post requires its source album ID')
+    elif category == 'tumblr':
         value = _numeric(_agree([data.get('id'), data.get('id_string')]))
     elif category == 'leakgallery':
         creator = _id(data.get('creator'))
@@ -64,10 +69,10 @@ def manifest(data, category):
             or marker['post_id'] != post(data, category)['value']
             or not isinstance(marker['items'], list) or not 1 <= len(marker['items']) <= 4096):
         raise InvalidData('Invalid captured web-media membership')
-    if category != 'tumblr' and marker['album']:
+    if category not in ('tumblr', 'erome') and marker['album']:
         raise InvalidData('A file page or HTML media scan does not declare an album')
-    if category == 'leakgallery' and marker['complete']:
-        raise InvalidData('LeakGallery output cannot establish complete post membership')
+    if category in ('leakgallery', 'erome') and marker['complete']:
+        raise InvalidData('HTML media output cannot establish complete post membership')
     if category in ('jpgfish', 'imglike', 'putmega') and (len(marker['items']) != 1 or not marker['complete']):
         raise InvalidData('Chevereto capture requires its single source file')
     known = set()
@@ -80,7 +85,7 @@ def manifest(data, category):
             raise InvalidData('Captured source lists the same attachment twice')
         known.add(key)
     if marker['album'] and len(known) < 2:
-        raise InvalidData('Tumblr album requires multiple observed attachments')
+        raise InvalidData('An album requires multiple observed attachments')
     return marker
 
 
@@ -117,6 +122,9 @@ def _marker(data, category, items, *, complete, album=False):
 def install(extractor, producer, scope):
     from gallery_dl.extractor.common import Message
     category = extractor.category
+    if category == 'erome':
+        install_erome(extractor)
+        return
     if category == 'tumblr':
         if extractor.avatar or extractor.external:
             raise InvalidData('Native Tumblr intake requires avatar=false and external=false')
@@ -185,6 +193,51 @@ def install(extractor, producer, scope):
                     data[FIELD] = _marker(data, category, [{'url': source_url, 'kind': _kind(data)}],
                                           complete=category != 'leakgallery')
                 data['web_media_url'] = source_url
+            yield kind, url, data
+
+    extractor.items = messages
+
+
+def install_erome(extractor):
+    """Retain one bounded album observation before any file can be archived.
+
+    Erome's HTML traversal provides order but cannot prove that inaccessible
+    items are absent. Keep it partial, and never use num as attachment identity.
+    Parent/profile extractors retain their ordinary child traversal.
+    """
+    from gallery_dl.extractor.common import Message
+    if extractor.subcategory != 'album':
+        return
+    configured = extractor.config('archive-format')
+    if configured and (not isinstance(configured, str) or '{web_media_id}' not in configured):
+        raise InvalidData('Native Erome archive-format must include {web_media_id}')
+    extractor.archive_fmt = 'native-v1_{album_id}_{web_media_id}'
+    original = extractor.items
+
+    def messages():
+        captured, files = [], []
+        for kind, url, data in original():
+            if len(captured) >= 4097 or kind not in (Message.Directory, Message.Url):
+                raise InvalidData('Invalid or oversized Erome album traversal')
+            # The real extractor reuses and mutates one dict for every file.
+            data = copy.deepcopy(data)
+            captured.append((kind, url, data))
+            if kind == Message.Url:
+                files.append((url, data))
+        if not files:
+            raise InvalidData('Erome album has no readable media')
+        first = post(files[0][1], 'erome')
+        if any(post(data, 'erome') != first or type(data.get('count')) is not int
+               or data['count'] != len(files) for _, _, data in captured):
+            raise InvalidData('Erome album output has inconsistent identity or item count')
+        items = [{'url': _url(url), 'kind': _kind(data)} for url, data in files]
+        marker = _marker(files[0][1], 'erome', items, complete=False, album=len(items) > 1)
+        for kind, url, data in captured:
+            data[FIELD] = marker
+            data['_http_headers'] = {**data.get('_http_headers', {}), 'Referer': 'https://www.erome.com/a/' + first['value']}
+            if kind == Message.Url:
+                data['web_media_url'] = _url(url)
+                data['web_media_id'] = reference(data['web_media_url']).removeprefix('url:')
             yield kind, url, data
 
     extractor.items = messages

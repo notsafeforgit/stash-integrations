@@ -117,7 +117,10 @@ def metadata(source):
     """Source text and post dates, without substituting an attachment caption."""
     data, category = _context(source)
     text_keys, date_keys = ("content", "selftext", "title"), ("date",)
-    if category == "bluesky":
+    if category == "erome":
+        # The extractor derives date from a media URL version, not publication.
+        date_keys = ()
+    elif category == "bluesky":
         text_keys, date_keys = ("text",), ("createdAt", "date")
     elif category == "tiktok":
         text_keys = ("desc", "title")

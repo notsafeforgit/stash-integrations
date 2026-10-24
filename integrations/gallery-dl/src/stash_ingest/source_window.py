@@ -32,6 +32,8 @@ def published(metadata, category):
     data, category = _context({**metadata, "category": category})
     if category not in ("reddit", "twitter", "instagram", "coomer", "kemono", "bluesky", "tiktok", 'ytdl', 'ytdl-generic', *web_media.CATEGORIES):
         raise UnsupportedSource("This extractor needs a native source-date adapter")
+    if category == 'erome':
+        raise InvalidData('Erome supports traversal only; its media URL date is not a publication timestamp')
     try:
         if category in web_media.CATEGORIES:
             web_media.post(data, category)
@@ -133,6 +135,8 @@ def validate_keywords(extractor):
     elif extractor.category in ('ytdl', 'ytdl-generic'):
         protected = protected | {'extractor_key', 'webpage_url', 'timestamp', 'upload_date', 'ytdl_media',
                                  'channel_id', 'uploader_id', '_type', 'entries'}
+    if extractor.category == 'erome':
+        protected = protected | {'album_id', 'user', 'count', 'web_media_id'}
     if extractor.category in web_media.CATEGORIES:
         protected = protected | {'web_media', 'web_media_url', 'id_string', 'creator', 'photo', 'photos',
                                  'url', 'video_url', 'audio_url', 'timestamp', 'native_file_exclusion'}
