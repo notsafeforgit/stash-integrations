@@ -16,6 +16,7 @@ from test_run_queue import request, admission
 
 
 def schema_thirteen(db):
+    db.execute("DROP TABLE IF EXISTS scheduled_calls")
     db.execute("DROP TABLE IF EXISTS missing_media")
     db.execute("DROP TABLE IF EXISTS deleted_media")
     db.execute("DROP TABLE IF EXISTS worker_configurations")

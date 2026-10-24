@@ -26,6 +26,7 @@ class MissingMediaMigrationTests(unittest.TestCase):
             queue.admit(delivery, admission(delivery.body))
             queue.enqueue(request(30, 40), ticket_uuid=str(uuid.uuid4()))
             queue.claim(str(uuid.uuid4()))
+            box.db.execute('DROP TABLE scheduled_calls')
             box.db.execute('DROP TABLE missing_media')
             box.db.execute('PRAGMA user_version=18')
         self.tables = [row[0] for row in self.db.execute("SELECT name FROM sqlite_schema WHERE type='table'")]
@@ -56,7 +57,7 @@ class MissingMediaMigrationTests(unittest.TestCase):
             with closing(self.open()) as box:
                 return box.db.execute('PRAGMA user_version').fetchone()[0]
         with ThreadPoolExecutor(max_workers=3) as pool:
-            self.assertEqual(list(pool.map(upgrade, range(3))), [19, 19, 19])
+            self.assertEqual(list(pool.map(upgrade, range(3))), [20, 20, 20])
         self.assertEqual(self.db.execute('SELECT * FROM missing_media ORDER BY service,item').fetchall(), self.rows)
         self.unchanged()
         with closing(self.open()) as box:
@@ -68,7 +69,7 @@ class MissingMediaMigrationTests(unittest.TestCase):
 
     def test_upgrade_without_old_file_and_fresh_outbox_use_only_the_producer_database(self):
         with closing(self.open()) as box:
-            self.assertEqual(box.db.execute('PRAGMA user_version').fetchone()[0], 19)
+            self.assertEqual(box.db.execute('PRAGMA user_version').fetchone()[0], 20)
             self.assertEqual(box.db.execute('SELECT count(*) FROM missing_media').fetchone()[0], 0)
         self.assertFalse(self.legacy.exists())
         self.unchanged()

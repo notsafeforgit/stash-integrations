@@ -126,5 +126,5 @@ class MissingMediaTests(test_gallery.unittest.TestCase):
         self.assertIsNone(missing_media.failed(self.box, bound, 404))
         with closing(Outbox(self.box.path, self.box.endpoint, self.box.producer)) as reopened:
             self.assertEqual(missing_media.failed(reopened, bound, 410)['attempts'], 3)
-        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 19)
+        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 20)
         self.assertFalse(self.box.path.with_name(self.box.path.name + '.missing-media.sqlite').exists())

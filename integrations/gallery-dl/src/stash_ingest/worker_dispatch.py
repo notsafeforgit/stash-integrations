@@ -24,6 +24,7 @@ from .outbox import Capacity, Conflict
 from .dispatch_retention import DispatchCapacity
 from .run_queue import RunQueue, submit_once
 from .source_calls import SourceCalls, resolve_once
+from .scheduled_calls import ScheduledCalls, advance_schedule
 
 SCHEMA = "stash-gallery-dispatch-v1"
 
@@ -139,11 +140,13 @@ def dispatch_all(box, client, profiles):
     worker = WorkerDispatcher(box, client, profiles)
     requests, calls, backfills = RunQueue(box), SourceCalls(box), BackfillCalls(box)
     delivery = drain_once(box, client)
+    schedules = ScheduledCalls(box)
+    scheduling = advance_schedule(schedules, client)
     backfill = advance_once(backfills, client)
     resolution = resolve_once(calls, client)
     submission = submit_once(requests, client)
     result = worker.once()
-    return {**result, "delivery": delivery, "backfill": backfill, "resolution": resolution, "submission": submission,
+    return {**result, "scheduling": scheduling, "scheduled_calls": schedules.summary(), "delivery": delivery, "backfill": backfill, "resolution": resolution, "submission": submission,
             "outbox": box.status(), "source_requests": requests.status(), "source_calls": calls.summary(),
             "backfill_calls": backfills.summary(), "enrichment": EnrichmentJournal(box).summary(),
             "discovery": DiscoveryJournal(box).summary(),

@@ -154,6 +154,7 @@ class DetailAdmissionMigrationTests(DetailFixture):
         self.box.db.execute("INSERT INTO worker_dispatch(uuid,after_entry,discovery_detail_delivery_after) VALUES(?,?,?)",
                             (str(uuid.uuid4()), "details", self.job["uuid"]))
         self.box.db.execute("ALTER TABLE discovery_detail_dispatch DROP COLUMN target_cursor")
+        self.box.db.execute("DROP TABLE IF EXISTS scheduled_calls")
         self.box.db.execute("DROP TABLE IF EXISTS missing_media")
         self.box.db.execute("DROP TABLE IF EXISTS deleted_media")
         self.box.db.execute("DROP TABLE IF EXISTS worker_configurations")
@@ -173,6 +174,7 @@ class DetailAdmissionMigrationTests(DetailFixture):
     def test_conflicting_column_rolls_back_without_discarding_pending_evidence(self):
         with self.journal.execution():
             pending = self.stage()
+        self.box.db.execute("DROP TABLE IF EXISTS scheduled_calls")
         self.box.db.execute("DROP TABLE IF EXISTS missing_media")
         self.box.db.execute("DROP TABLE IF EXISTS deleted_media")
         self.box.db.execute("DROP TABLE IF EXISTS worker_configurations")

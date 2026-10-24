@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "7884e8becef756c2838f246feec413f61a14876091d65091806415fed13bb375",
+  "implementation_sha256": "fc04bb1e58608cb30af6986f9ff779e3fc995bc1ed808f5d236acb515b069d5f",
   "decision": "compatible",
-  "reason": "Support Reddit-linked Imgur album members using a bounded ordered API list and exact API media/rendition matching, including GIFV-to-MP4. Extend existing schema-19 bounded missing-media observations to linked album/gallery endpoints; missing albums retain post evidence without invented file receipts. Existing attachment identities, execution/capture contracts, admission meaning, coverage, cursors, producer identities and acknowledgements remain unchanged. Requires the matching server album reader before deploying these producer repairs. Serialize storage-marker reads with initial hard-link publication/cleanup to prevent concurrent setup false failures without weakening corruption detection or changing existing marker identities."
+  "reason": "Persist subscription scheduling intent before Stash lookup and retry transient API outages through the dispatcher. Original caller identity, policy and publication window remain frozen; source execution, capture, coverage and cursor semantics are unchanged. Producer schema 20 and its archive reader ship together; all shared-outbox clients must upgrade before activation."
 }

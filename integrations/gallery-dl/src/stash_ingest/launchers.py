@@ -18,6 +18,7 @@ from .encoding import InvalidData, digest, encode, identifier
 from .launcher_inputs import date_min, instagram_list, instagram_target, mirror_list, mirror_target, reddit_list, reddit_name, reddit_urls, social_list, social_target, twitter_list, twitter_target
 from .outbox import Capacity, Outbox
 from .source_calls import SourceCalls
+from .scheduled_calls import ScheduledCalls, advance_schedule
 from .subscriptions import NoSubscriptions, subscribed_targets
 from . import windows
 
@@ -152,18 +153,17 @@ def main(service, argv=None):
                     raise InvalidData('Date-based launchers require a publication-window profile')
                 if value["full_history"] and profile._gallery.get("skip") is not True:
                     raise InvalidData("Full-history and top scans require a reviewed profile with global skip=true")
-                monitors = None
                 if args.subscriptions:
-                    targets, monitors = subscribed_targets(Client(args.endpoint, args.producer, token_env=args.token_env),
-                        profile.root_uuid, service, mode=value.get('mode', 'new'))
                     # The subscription owns its target URL. Date windows still
                     # come from this scheduler invocation, not application state.
                     window = windows.normalize({'since': date_min(value['date_min'], value['date_min_relative'],
                         value['date_min_days'], box.clock()) if service == 'reddit' else None,
                         'until': value['until'] or datetime.fromtimestamp(box.clock(), timezone.utc).isoformat(timespec='milliseconds')})
-                    ignored = []
-                    if not targets:
-                        raise NoSubscriptions
+                    from .configuration_store import remember
+                    remember(box, profile)
+                    return {'service': service, 'mode': value.get('mode', 'new'), 'source': {
+                        'root_uuid': profile.root_uuid, 'operation': 'download',
+                        'policy_sha256': profile.policy_sha256, 'cooldown_seconds': 0, 'window': window}}
                 else:
                     targets, window, ignored = expand(service, value, box.clock())
                 if ignored:
@@ -175,11 +175,22 @@ def main(service, argv=None):
                 remember(box, profile)
                 definition = {"targets": targets, "root_uuid": profile.root_uuid, "operation": "download",
                         "policy_sha256": profile.policy_sha256, "cooldown_seconds": 0, "window": window}
-                if monitors is not None:
-                    definition['subscriptions'] = monitors
                 return definition
 
-            recorded = calls.record(call, digest(encode(value, 16384)), prepare)
+            request_sha256 = digest(encode(value, 16384))
+            # Old completed callers remain replayable without new API reads.
+            if args.subscriptions and calls._find(call) is None:
+                schedules = ScheduledCalls(box)
+                schedules.record(call, request_sha256, prepare)
+                scheduling = advance_schedule(schedules, Client(args.endpoint, args.producer, token_env=args.token_env), call=call)
+                if scheduling['state'] != 'recorded':
+                    result = {'call_uuid': call, 'state': scheduling['state'], 'scheduling': scheduling,
+                              'intake_completion': 'inspect_native_receipts'}
+                    print(json.dumps(result, sort_keys=True))
+                    if scheduling['state'] == 'review':
+                        return 1
+                    return 2 if args.strict_errors and scheduling['state'] != 'empty' else 0
+            recorded = calls.record(call, request_sha256, prepare)
             if 'subscriptions' in recorded['definition']:
                 recorded['definition'] = {k: v for k, v in recorded['definition'].items() if k != 'subscriptions'}
             result = {"call_uuid": call, "state": "recorded", "call": recorded, "intake_completion": "inspect_native_receipts"}

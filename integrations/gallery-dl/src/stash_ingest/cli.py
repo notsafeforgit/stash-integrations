@@ -70,6 +70,10 @@ def main(argv=None):
     call_status.add_argument("call_uuid")
     retry_call = commands.add_parser("retry-call", help="Retry unresolved reviewed targets without rebinding queued work")
     retry_call.add_argument("call_uuid")
+    schedule_status = commands.add_parser('schedules-status', help='Inspect retained subscription scheduling attempts')
+    schedule_status.add_argument('--call')
+    retry_schedule = commands.add_parser('retry-schedule', help='Retry a reviewed scheduling intent with its original window')
+    retry_schedule.add_argument('call_uuid')
     commands.add_parser("drain", help="Deliver one bounded batch of ready events")
     retry = commands.add_parser("retry", help="Retry a reviewed event with its original bytes")
     retry.add_argument("event_uuid")
@@ -166,6 +170,8 @@ def main(argv=None):
         requests = RunQueue(box)
         from .source_calls import SourceCalls, resolve_once
         calls = SourceCalls(box)
+        from .scheduled_calls import ScheduledCalls
+        schedules = ScheduledCalls(box)
         if args.command == "lookup-collections":
             from .collections import lookup_collections
             output = lookup_collections(client, args.target, args.root)
@@ -184,6 +190,10 @@ def main(argv=None):
             output = inspect_call(calls, client, args.call_uuid)
         elif args.command == "retry-call":
             output = {"retried": calls.retry(args.call_uuid), "call": calls.summary(args.call_uuid)}
+        elif args.command == 'schedules-status':
+            output = schedules.summary(args.call)
+        elif args.command == 'retry-schedule':
+            output = schedules.retry(args.call_uuid)
         elif args.command == "drain":
             output = {"delivery": drain_once(box, client), "outbox": box.status()}
         elif args.command == "retry":
@@ -343,7 +353,7 @@ def main(argv=None):
             from .discovery_journal import DiscoveryJournal
             from .discovery_detail_journal import DiscoveryDetailJournal
             from .n8n_receipts import LegacyReceipts
-            output = {**box.status(), "source_requests": requests.status(), "source_calls": calls.summary(),
+            output = {**box.status(), "scheduled_calls": schedules.summary(), "source_requests": requests.status(), "source_calls": calls.summary(),
                       "backfill_calls": BackfillCalls(box).summary(), "legacy_n8n_receipts": LegacyReceipts(box).summary(),
                       "enrichment": EnrichmentJournal(box).summary(), "discovery": DiscoveryJournal(box).summary(),
                       "discovery_detail": DiscoveryDetailJournal(box).summary()}
@@ -380,6 +390,7 @@ def main(argv=None):
                           or any(output["source_calls"]["counts"][k] for k in ("pending", "resolving", "review"))
                           or any(output["backfill_calls"]["counts"][k] for k in ("pending", "active", "review")))
             if args.command == "dispatch-all":
+                incomplete |= any(output["scheduled_calls"]["counts"][k] for k in ("pending", "resolving", "review"))
                 incomplete |= any(output["enrichment"]["counts"].get(k, 0) for k in ("active", "review"))
                 incomplete |= any(output["discovery"]["counts"].get(k, 0) for k in ("active", "review"))
                 incomplete |= any(output["discovery_detail"]["counts"].get(k, 0) for k in ("active", "review"))
