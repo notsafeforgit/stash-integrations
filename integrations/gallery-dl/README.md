@@ -3484,7 +3484,11 @@ stays partial, and its media-URL timestamp is not a publication date; use a
 traversal profile. Uploader names do not assign performers. Native archive keys
 use `native-v1_{album_id}_{web_media_id}` where `web_media_id` is the canonical
 source URL digest. Reordering cannot archive a different file by position.
-Custom archive formats must contain `{web_media_id}`. Existing position-based
+Native output filenames use `{album_id}_{web_media_id}.{extension}` as well, so
+an existing file at an old position cannot be linked to a different attachment.
+Custom filename formats must contain `{web_media_id}` in every rule; archive
+formats must contain both `{album_id}` and `{web_media_id}`.
+Existing position-based
 entries are preserved but cannot prove completion for this native adapter.
 The existing durable manual request and outbox support interrupted retries;
 `stash-gallery download https://www.erome.com/a/<album-id>` needs no separate

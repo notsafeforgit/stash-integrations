@@ -209,9 +209,17 @@ def install_erome(extractor):
     if extractor.subcategory != 'album':
         return
     configured = extractor.config('archive-format')
-    if configured and (not isinstance(configured, str) or '{web_media_id}' not in configured):
-        raise InvalidData('Native Erome archive-format must include {web_media_id}')
+    if configured and (not isinstance(configured, str) or any(field not in configured for field in ('{album_id}', '{web_media_id}'))):
+        raise InvalidData('Native Erome archive-format must include {album_id} and {web_media_id}')
     extractor.archive_fmt = 'native-v1_{album_id}_{web_media_id}'
+    # Existing-file skips must not associate a reordered slot's old bytes with
+    # a new attachment. Keep the source identity in every output filename too.
+    configured = extractor.config('filename')
+    formats = configured.values() if isinstance(configured, dict) else (configured,)
+    if any(value is not None and (not isinstance(value, str) or '{web_media_id}' not in value)
+           for value in formats):
+        raise InvalidData('Native Erome filename formats must include {web_media_id}')
+    extractor.filename_fmt = '{album_id}_{web_media_id}.{extension}'
     original = extractor.items
 
     def messages():

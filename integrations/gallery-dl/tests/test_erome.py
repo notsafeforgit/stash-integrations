@@ -27,7 +27,7 @@ class EromeGalleryTests(unittest.TestCase):
         test_gallery.GalleryTests.setUp(self)
         self.lease.run['target_url'] = 'https://www.erome.com/a/Example1'
         self.producer.window = SourceWindow({'since': None, 'until': '2026-10-23T00:00:00Z', 'basis': 'traversal'})
-        config.set(('extractor',), 'filename', '{filename}.{extension}')
+        config.set(('extractor',), 'filename', None)
 
     task = test_gallery.GalleryTests.task
     events = test_gallery.GalleryTests.events
@@ -60,6 +60,28 @@ class EromeGalleryTests(unittest.TestCase):
         self.assertEqual(self.archive_count(), 3)
         for capture in self.events(kinds=('source.capture',))[3:]:
             self.assertEqual(source.attachment(capture['source']), identities[capture['source']['web_media_url']])
+
+    def test_replaced_album_slot_gets_new_bytes_and_preserves_original_file(self):
+        with patch.object(EromeAlbumExtractor, 'request', return_value=SimpleNamespace(text=page())):
+            self.assertEqual(self.task(fixture=EromeAlbumExtractor).run(), 0)
+        before = self.events(kinds=('file.completed',))
+        original_paths = {event['relative_path'] for event in before}
+        replacement = 'https://cdn.example/new.jpeg'
+        with patch.object(EromeAlbumExtractor, 'request', return_value=SimpleNamespace(text=page([replacement, *URLS[1:]]))):
+            retry = self.task(fixture=EromeAlbumExtractor)
+            download = retry.download
+            fetched = []
+            def changed_slot(url):
+                fetched.append(url)
+                return download(url)
+            retry.download = changed_slot
+            self.assertEqual(retry.run(), 0)
+        self.assertEqual(fetched, [replacement])
+        self.assertEqual(self.archive_count(), 4)
+        after = self.events(kinds=('file.completed',))[len(before):]
+        self.assertEqual(len(after), 3)
+        self.assertNotIn(after[0]['relative_path'], original_paths)
+        self.assertTrue(all((self.media / path).is_file() for path in original_paths))
 
     def test_failed_file_is_not_archived_and_retry_fetches_only_missing_file(self):
         with patch.object(EromeAlbumExtractor, 'request', return_value=SimpleNamespace(text=page())):
@@ -97,6 +119,12 @@ class EromeGalleryTests(unittest.TestCase):
             with self.assertRaises(InvalidData):
                 validate_keywords(EromeAlbumExtractor.from_url(self.lease.run['target_url']))
         config.set(('extractor',), 'keywords', None)
-        config.set(('extractor',), 'archive-format', '{album_id}_{num}')
-        with self.assertRaises(InvalidData):
-            web_media.install_erome(EromeAlbumExtractor.from_url(self.lease.run['target_url']))
+        for filename in ('{album_id}_{num}.{extension}', {'': '{filename}.{extension}'}):
+            config.set(('extractor',), 'filename', filename)
+            with self.assertRaises(InvalidData):
+                web_media.install_erome(EromeAlbumExtractor.from_url(self.lease.run['target_url']))
+        config.set(('extractor',), 'filename', None)
+        for archive_format in ('{album_id}_{num}', '{web_media_id}'):
+            config.set(('extractor',), 'archive-format', archive_format)
+            with self.assertRaises(InvalidData):
+                web_media.install_erome(EromeAlbumExtractor.from_url(self.lease.run['target_url']))

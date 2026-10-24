@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "6cfb19bf671f80ea2c0681dea1108712c98978811bf84d3aa7b9fc37dbf5dcaa",
+  "implementation_sha256": "c8aa033014e0f3e3cd793c46d97a9c6f11d4b356c862772410c082815b65b085",
   "decision": "compatible",
-  "reason": "Add native Erome album intake, previously unsupported: explicit album identity, partial ordered web_media membership, per-URL attachment/archive identity, and traversal-only timestamps. Existing source adapters, capture/execution contracts, queued policies, producer schema 19, receipts and archive entries retain their semantics. Erome position-based keys are preserved but never used as native completion proof. Shared contract fixtures and real pinned extractor tests cover ordering, failed-file retry and invalid evidence."
+  "reason": "Keep new Erome output filenames and archive keys tied to URL attachment identity, with archive keys also scoped to the album. This prevents a replacement at an existing position from reusing unrelated bytes. Filename budgeting recognizes web_media_id without changing existing adapters. Erome was not deployed from 0.6.2. Queued policies, execution/capture contracts, producer schema 19, receipts and existing source behavior are unchanged. Real extractor tests cover reordered and replaced slots, failed-file retry and unsafe custom formats."
 }

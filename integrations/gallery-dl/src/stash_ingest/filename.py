@@ -67,7 +67,7 @@ class Template:
             expression += '}'
             if field.split('[', 1)[0] in {'title', 'fulltitle'} or field == '_reddit[title]':
                 self.flexible.append(len(self.parts))
-            if field.split('[', 1)[0] in {'id', 'post_id', 'tweet_id', 'media_id', 'file_id', 'filename'} or field == '_reddit[id]':
+            if field.split('[', 1)[0] in {'id', 'post_id', 'tweet_id', 'media_id', 'file_id', 'filename', 'web_media_id'} or field == '_reddit[id]':
                 self.has_identity = True
             self.parts.append((formatter.parse(expression, default).format_map, None))
 
