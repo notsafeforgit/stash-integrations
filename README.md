@@ -73,6 +73,12 @@ base revision; the review file never participates in runtime policy hashing.
 
 Version 0.5 introduces this contract identity. Existing source-hash policies still
 need one explicit administrative upgrade during deployment. Keep producer UUIDs,
-outboxes, windows, checkpoints and retry deadlines. The outbox remains schema 19;
+outboxes, windows, checkpoints and retry deadlines. That release retained producer schema 19;
 there is no implicit policy alias or queue reset. Later compatible releases need
 no policy handoff solely because their Python bytes changed.
+
+
+Release v0.6.7 introduces producer schema 20 for durable subscription scheduling.
+Requests are saved before API lookup and resumed by ordinary workers after Stash
+maintenance. Deploy the matching archive reader and every shared-outbox client
+before enabling the new workers; existing source policies and receipts are retained.

@@ -77,3 +77,10 @@ shape and values, including when a sealed capture is resumed by the new reader.
 Deploy this reader before any shared producer outbox advances to schema 19.
 Worker migration, including the one-time import of v0.3's adjacent cache, is
 owned by stash-ingest; archive inspection never migrates a snapshot.
+
+
+Schema 20 adds durable subscription scheduling intents. Version 0.6.7 validates
+pending requests, retry leases and their atomic handoff to source callers, and
+includes a scheduling boundary digest in receipt reports. Deploy this reader and
+all shared-outbox clients before schema-20 workers; an old reader rejects a newer
+queue. Existing schema-19 and earlier archives retain their original verification.

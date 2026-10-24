@@ -3584,3 +3584,34 @@ policy upgrades for existing unfinished runs through Stash's administrative API;
 keep their UUIDs, windows, checkpoints and retry deadlines. A deferred configuration
 error still needs its own repair and review. Website downloader revisions remain
 unchanged by this release.
+
+
+### Subscription scheduling across Stash outages
+
+Subscription launchers persist their intent in producer schema 20 before fetching
+subscriptions. The intent freezes the caller UUID, reviewed policy and publication
+window. A temporary network error or HTTP 408/425/429/500/502/503/504 leaves it pending;
+`dispatch-all` retries it with exponential delays from 15 seconds to five minutes,
+honoring a longer `Retry-After`. Retries continue until recovery and survive process
+exit or reboot. Actual retry timing also depends on the worker timer and current
+worker activity. Each pass handles at most one due scheduling intent before normal
+queue delivery and execution, so an outage does not monopolize the worker.
+
+The first successful subscription read freezes the enabled targets and revisions.
+Recording those targets and marking the intent recorded happen in one transaction.
+Repeated `--call` invocations retain the first window and policy; lost responses and
+expired leases cannot duplicate that handoff. An empty subscription list completes
+as `empty`. Pending scheduling is accepted work, not confirmation of a scrape;
+`--strict-errors` still reports incomplete work. Local configuration/storage errors
+fail immediately. Authentication, scope and invalid server responses are retained
+as `review`, with a sanitized error code and HTTP status.
+
+Use `stash-ingest ... schedules-status [--call UUID]` to inspect scheduling and
+`stash-ingest ... retry-schedule UUID` after correcting a reviewed failure. The
+normal worker dispatcher resumes it. No website requests are made by this stage.
+
+Upgrade all users of a shared producer database and the archive reader to v0.6.7
+before opening it with schema-20 workers. Older binaries deliberately reject the
+new schema. This includes n8n command bridges and host maintenance clients, not
+only background workers. Queued source windows, policies, receipts and website
+backoff contracts are unchanged. Historical schema-19 archives remain supported.
