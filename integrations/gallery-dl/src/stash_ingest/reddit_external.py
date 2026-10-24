@@ -42,7 +42,7 @@ def linked(value):
         return None
     extension = '.' + parsed.path.rsplit('.', 1)[-1].lower()
     kind = 'image' if extension in IMAGE else 'video' if extension in VIDEO else 'unknown'
-    if kind == 'unknown' and extension != '.gif':
+    if kind == 'unknown' and extension not in ('.gif', '.gifv'):
         return None
     return {'namespace': 'native:reddit', 'value': identity}, kind
 
@@ -62,6 +62,17 @@ def same_url(left, right):
         return reference(html.unescape(left)) == reference(html.unescape(right))
     except (InvalidData, TypeError):
         return False
+
+
+def imgur_image_id(value):
+    """Identify direct Imgur renditions without replacing their URL identity."""
+    if linked(value) is None:
+        return None
+    parsed = urlsplit(html.unescape(value))
+    if parsed.hostname != 'i.imgur.com':
+        return None
+    match = re.fullmatch(r'/([A-Za-z0-9]{5}|[A-Za-z0-9]{7})[sbtmlh]?\.[A-Za-z0-9]+', parsed.path)
+    return match[1] if match else None
 
 
 def redgifs_image_id(value):
@@ -111,13 +122,20 @@ def preview_matches(data, download):
 
 
 def attachment(data, source, download):
+    from . import reddit_imgur
+    album = reddit_imgur.attachment(data, source, download)
+    if album is not None:
+        return album
     ref = target(data)
     if ref is None or data.get('comment'):
         return None
-    if ref['namespace'] == 'native:imgur' and source.get('category') == 'imgur':
+    image_id = (ref['value'] if ref['namespace'] == 'native:imgur' else
+                next((identity for key in ('url', 'url_overridden_by_dest')
+                      if (identity := imgur_image_id(data.get(key))) is not None), None))
+    if image_id is not None and source.get('category') == 'imgur':
         # A captured single-item API response ties the permalink to its CDN
         # rendition. Never substitute another album item or guess from a name.
-        if (source.get('id') == ref['value'] and source.get('is_album') is False
+        if (source.get('id') == image_id and source.get('is_album') is False
                 and source.get('image_count') == 1 and same_url(source.get('url'), download)):
             return ref
     # Keep the direct image URL's existing attachment identity, including its

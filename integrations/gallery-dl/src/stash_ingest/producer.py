@@ -145,6 +145,12 @@ class Producer:
         return self._prepare(metadata)
 
     def skipped(self, metadata, attachment, status):
+        if attachment is None:
+            # A missing album has no observed member identity. Keep the post
+            # and skip evidence without inventing a file transfer or archive key.
+            self._capture(dict(metadata, native_media_status=status))
+            self.routine_post_new = True
+            return
         prepared = self._prepare(dict(metadata, native_media_status=status), attachment=attachment)
         self.report_download(prepared, 'failed', reason_code='source_failure')
         self.routine_post_new = True
@@ -162,6 +168,11 @@ class Producer:
         self.checkpoint(cursor, replay, False)
 
     def _prepare(self, metadata, *, attachment=None):
+        kept, event_id, sequence = self._capture(metadata)
+        return Prepared(event_id, source.attachment(kept) if attachment is None else attachment,
+                        kept, sequence, self.owner_uuid, self.fence)
+
+    def _capture(self, metadata):
         self.check()
         kept = retain(metadata)
         post = source.post(kept)
@@ -178,8 +189,7 @@ class Producer:
         sequence = self.outbox.db.execute("SELECT seq FROM events WHERE event_uuid=?", (event_id,)).fetchone()[0]
         if not 1 <= sequence <= 2**53 - 1:
             raise InvalidData("Download transfer sequence is outside the supported range")
-        return Prepared(event_id, source.attachment(kept) if attachment is None else attachment,
-                        kept, sequence, self.owner_uuid, self.fence)
+        return kept, event_id, sequence
 
     def report_download(self, prepared, state, *, file_event_uuid=None, reason_code=None):
         # Reporting a finished/failed current file does not require a live

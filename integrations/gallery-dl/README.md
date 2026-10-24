@@ -252,14 +252,25 @@ legacy `v3.redgifs.com/ifr/` links, use the
 captured watch/iframe ID; direct external files use their full source URL.
 Redgifs image permalinks retain that direct URL identity while their captured
 API item ID and rendition URLs connect the actual CDN download to it.
+Imgur album responses retain their original ordered media IDs/kinds in
+`album.imgur_media` version 1 before gallery-dl splits the list into files. The
+album permalink and API identity bind those members to the Reddit post; each
+file uses its own `native:imgur` ID. Metadata-only fetches retain the same list.
+Direct Imgur GIFV/animated-image links keep their URL identity when the captured
+single-item API response resolves the corresponding MP4 rendition.
 A retained Reddit fallback preview can resolve to that same linked attachment.
 Unrelated child downloads and Redgifs posters cannot substitute for the clip,
 and one watch URL does not establish an external gallery's membership or count.
 Twitter captures preserve the
 original media list before gallery-dl's transformation and keep each output's
 attachment ID. Output numbers and filenames do not establish attachment identity.
-Unsupported or ambiguous attachments stop before download. A single attachment
-can be associated without creating a gallery.
+Contradictory identities still stop before download. A single attachment can be
+associated without creating a gallery. Exact linked Imgur album/gallery API
+404/410 responses use three bounded attempts, then record a durable post-level
+skip and continue later posts. These decisions share the existing producer
+outbox database, distinguish album IDs from image IDs and survive interruption.
+A missing album does not invent an attachment, download receipt or successful
+archive entry. Authorization, throttling and transport failures remain retryable.
 
 After synchronous postprocessing, the adapter flushes and hashes the actual
 final file, then queues its dependent file event and downloaded report before updating gallery-dl's

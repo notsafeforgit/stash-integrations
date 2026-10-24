@@ -161,6 +161,9 @@ def collect(url, settings, resume=None, *, factory=None, check=lambda: None, res
             target.sleep(pause(), "extractor")
         if target.category == "twitter":
             twitter_evidence(target)
+        elif target.category == "imgur":
+            from . import reddit_imgur
+            reddit_imgur.install(target)
         elif target.category == "instagram":
             instagram.install(target)
         elif target.category in ("kemono", "coomer"):

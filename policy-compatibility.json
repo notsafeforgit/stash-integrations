@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "e541194921ddb4aa6abd79c2400bab2b8a2928c66e56aa3f705b85fc4eecbac7",
+  "implementation_sha256": "ade487f7b9499bc5df96421a5b6be5bde2c0b86d3cc8d9b9d9e9b6807fb147b1",
   "decision": "compatible",
-  "reason": "Package yt-dlp with its supported curl-cffi extra so reviewed configurations can opt into browser impersonation through the existing gallery-dl bridge. Producer implementation bytes, admission meaning, coverage, cursors, execution/capture contracts, schema 19 and receipt semantics are unchanged. Browser settings remain explicit configuration and require normal policy upgrades for retained work."
+  "reason": "Support Reddit-linked Imgur album members using a bounded ordered API list and exact API media/rendition matching, including GIFV-to-MP4. Extend existing schema-19 bounded missing-media observations to linked album/gallery endpoints; missing albums retain post evidence without invented file receipts. Existing attachment identities, execution/capture contracts, admission meaning, coverage, cursors, producer identities and acknowledgements remain unchanged. Requires the matching server album reader before deploying these producer repairs."
 }

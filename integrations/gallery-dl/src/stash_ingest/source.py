@@ -284,4 +284,4 @@ def attachment(source):
         selected = social_media.attachment(data, category, download_url)
         if selected is not None:
             return selected
-    raise UnsupportedSource("Downloaded media cannot be uniquely matched to the captured source list")
+    raise UnsupportedSource("No supported attachment mapping for the selected media in this source capture")

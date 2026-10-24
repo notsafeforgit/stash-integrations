@@ -1,14 +1,13 @@
 """Bounded retries for a known external attachment, never a missing account.
 
-Only exact single-item Imgur/Redgifs API 404/410 responses qualify. After
-three observations the producer retains a skip decision across restarts.
+Only exact linked-item/album Imgur and single-item Redgifs API 404/410
+responses qualify. After three observations the producer retains a skip decision across restarts.
 Authentication, listing, rate-limit and transport failures remain retryable.
 """
 
-import re
 from urllib.parse import urlsplit
 
-from . import reddit_external
+from . import reddit_external, reddit_imgur
 from .encoding import utc_now
 from .retention import retain
 
@@ -42,6 +41,10 @@ def target(category, url, metadata):
         if not isinstance(parents, list) or not isinstance(parents[-1], dict):
             return None
         media = parents[-1]
+    album = reddit_imgur.link(url)
+    if album is not None and not media.get('comment') and reddit_imgur.target(media) == album[1]:
+        return {'service': 'imgur', 'item': ('album:' if album[0] == 'a' else 'gallery:') + album[1],
+                'attachment': None, 'metadata': data}
     ref, requested = reddit_external.target(media), reddit_external.linked(url)
     if ref is None or requested is None or ref != requested[0] or media.get('comment'):
         return None
@@ -49,10 +52,10 @@ def target(category, url, metadata):
     if ref['namespace'] == 'native:imgur':
         service, item = 'imgur', ref['value']
     elif parsed.hostname == 'i.imgur.com':
-        match = re.fullmatch(r'/([A-Za-z0-9]{5}|[A-Za-z0-9]{7})[sbtmlh]?\.[A-Za-z0-9]+', parsed.path)
-        if not match:
+        item = reddit_external.imgur_image_id(url)
+        if not item:
             return None
-        service, item = 'imgur', match[1]
+        service = 'imgur'
     elif ref['namespace'] == 'native:redgifs':
         service, item = 'redgifs', ref['value']
     else:
@@ -68,9 +71,18 @@ def matches(error, url, bound, extractor):
 
 
 def request_matches(url, bound, extractor):
-    if bound is None or extractor.category != bound['service'] or extractor.subcategory != 'image':
+    if bound is None or extractor.category != bound['service']:
         return False
     parsed = urlsplit(url)
+    if bound['service'] == 'imgur' and ':' in bound['item']:
+        kind, identity = bound['item'].split(':', 1)
+        paths = {'album': ('/post/v1/albums/', '/3/album/')}
+        if kind == 'gallery':
+            paths.update(gallery=('/post/v1/posts/', '/3/gallery/'), image=('/post/v1/media/', '/3/image/'))
+        return (parsed.scheme == 'https' and parsed.netloc == 'api.imgur.com' and not parsed.query
+                and parsed.path in {prefix + identity for prefix in paths.get(extractor.subcategory, ())})
+    if extractor.subcategory != 'image':
+        return False
     host, paths = (('api.imgur.com', ('/post/v1/media/', '/3/image/')) if bound['service'] == 'imgur'
                    else ('api.redgifs.com', ('/v2/gifs/',)))
     return (parsed.scheme == 'https' and parsed.netloc == host and not parsed.query

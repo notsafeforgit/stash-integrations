@@ -113,7 +113,10 @@ class MissingMediaTests(test_gallery.unittest.TestCase):
             self.assertFalse(missing_media.matches(error, url, bound, extractor))
         extractor.subcategory = 'user'
         self.assertFalse(missing_media.matches(error, 'https://api.imgur.com/post/v1/media/Missing', bound, extractor))
-        self.assertIsNone(missing_media.target('reddit', 'https://imgur.com/a/Missing', reddit_data(url='https://imgur.com/a/Missing')))
+        album = missing_media.target('reddit', 'https://imgur.com/a/Missing', reddit_data(url='https://imgur.com/a/Missing'))
+        self.assertEqual(album['item'], 'album:Missing')
+        self.assertIsNone(album['attachment'])
+        self.assertFalse(missing_media.matches(error, 'https://api.imgur.com/post/v1/media/Missing', album, extractor))
         self.assertIsNone(missing_media.target('reddit', 'https://imgur.com/Another', reddit_data(url='https://imgur.com/Missing')))
         self.assertIsNone(missing_media.target('imgur', 'https://imgur.com/Missing', reddit_data(url='https://imgur.com/Missing')))
 

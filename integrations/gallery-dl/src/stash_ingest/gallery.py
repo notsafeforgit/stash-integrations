@@ -14,7 +14,7 @@ from gallery_dl import config, exception, job, text, version
 from gallery_dl import path as gallery_path
 from gallery_dl.extractor.common import Message
 
-from . import deleted_media, missing_media, filename, instagram, mirror, recent, social_media, web_media
+from . import deleted_media, missing_media, reddit_imgur, filename, instagram, mirror, recent, social_media, web_media
 from .encoding import InvalidData
 from .filesystem import destination_lock
 from .runs import SourceFailure, SourcePaused, SourceTurnComplete
@@ -260,7 +260,8 @@ class NativeDownloadJob(job.DownloadJob):
                 kwargs["session"] = SourceSession(self.producer, kwargs.get("session") or extractor.session)
             previous_status = extractor.status
             parent = self._native_parent
-            missing = parent._native_missing_target if parent is not None else None
+            missing_owner = self._missing_owner()
+            missing = missing_owner._native_missing_target if missing_owner else None
             url = args[0] if args else kwargs.get('url', '')
             while True:
                 self.producer.check()
@@ -282,11 +283,19 @@ class NativeDownloadJob(job.DownloadJob):
                     if status is not None:
                         raise missing_media.MissingMedia(status) from None
                 else:
-                    if missing_media.request_matches(url, missing, extractor):
+                    if extractor.subcategory != 'gallery' and missing_media.request_matches(url, missing, extractor):
                         missing_media.recovered(self.producer.outbox, missing)
                     return result
 
         extractor.request = guarded_request
+
+    def _missing_owner(self):
+        parent = self._native_parent
+        while parent is not None:
+            if parent._native_missing_target is not None:
+                return parent
+            parent = parent._native_parent
+        return None
 
     def run(self):
         self.producer.check()
@@ -309,6 +318,8 @@ class NativeDownloadJob(job.DownloadJob):
         self._source_operation(super()._init)
         if self.extractor.category in web_media.CATEGORIES:
             web_media.install(self.extractor, self.producer, self._native_scope)
+        elif self.extractor.category == "imgur":
+            reddit_imgur.install(self.extractor)
         elif self.extractor.category == "twitter":
             twitter_evidence(self.extractor)
         elif self.extractor.category == "instagram":
@@ -363,7 +374,7 @@ class NativeDownloadJob(job.DownloadJob):
                     self._native_parent._native_deleted_result = exc.status
                     return
                 except missing_media.MissingMedia as exc:
-                    self._native_parent._native_missing_result = exc.status
+                    self._missing_owner()._native_missing_result = exc.status
                     return
                 if kind == Message.Queue and (instagram.collection_queue(self.extractor, url, data)
                                               or social_media.collection_queue(self.extractor, url, data)
@@ -585,7 +596,8 @@ class NativeDownloadJob(job.DownloadJob):
             if status is not None or missing is not None:
                 # Keep gallery-dl's normal Reddit preview fallback. Failure of
                 # that transfer still leaves the run retryable.
-                if self.fallback and '_fallback' in kwdict:
+                if (self.fallback and '_fallback' in kwdict
+                        and not (missing is not None and self._native_missing_target['attachment'] is None)):
                     fallback = kwdict['_fallback'] = iter(kwdict['_fallback'])
                     candidate = next(fallback, None)
                     if candidate is not None:

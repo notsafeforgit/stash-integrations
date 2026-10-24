@@ -17,6 +17,14 @@
         "pkg/archive/testdata/captured-web-media-v1.json"
       ],
       "reason": "Shared native Erome album identity and ordered partial membership contract fixtures."
+    },
+    {
+      "revision": "ecd316540cfc3f4dd838fa6b439d0aa7dc0e72e4",
+      "paths": [
+        "pkg/archive/testdata/reddit-imgur-albums-v1.json",
+        "pkg/archive/testdata/reddit-external-media-v1.json"
+      ],
+      "reason": "Shared Reddit-linked Imgur ordered album membership and direct GIFV rendition contract fixtures."
     }
   ]
 }
