@@ -227,6 +227,42 @@ class StorageBindingTests(unittest.TestCase):
         self.assertTrue(all(result == results[0] for result in results))
         self.assertEqual([path.name for path in directory.iterdir()], [NAME])
 
+    def test_marker_read_waits_for_publication_cleanup(self):
+        import fcntl
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from stash_ingest import storage_marker
+        directory = self.directory / 'publishing'
+        directory.mkdir()
+        published, release, reading = threading.Event(), threading.Event(), threading.Event()
+        unlink, flock = os.unlink, fcntl.flock
+
+        def delayed_unlink(path, *args, **kwargs):
+            if str(path).startswith(NAME + '.'):
+                published.set()
+                if not release.wait(5):
+                    raise RuntimeError('test did not release marker publisher')
+            return unlink(path, *args, **kwargs)
+
+        def observe_lock(fd, operation):
+            if operation == fcntl.LOCK_SH:
+                reading.set()
+            return flock(fd, operation)
+
+        with patch.object(storage_marker.os, 'unlink', delayed_unlink), \
+                patch.object(storage_marker.fcntl, 'flock', observe_lock), \
+                ThreadPoolExecutor(max_workers=2) as executor:
+            publisher = executor.submit(review_directory, directory)
+            try:
+                self.assertTrue(published.wait(5))
+                reader = executor.submit(review_directory, directory)
+                self.assertTrue(reading.wait(5))
+                self.assertFalse(reader.done(), 'reader must wait until temporary-link cleanup finishes')
+            finally:
+                release.set()
+            self.assertEqual(publisher.result(timeout=5), reader.result(timeout=5))
+        self.assertEqual([path.name for path in directory.iterdir()], [NAME])
+
     def test_old_registry_tokens_keep_strict_historical_semantics(self):
         from stash_ingest.filesystem import Root
         value = copy.deepcopy(self.value)

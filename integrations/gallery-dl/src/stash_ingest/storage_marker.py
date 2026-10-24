@@ -1,5 +1,6 @@
 """Application-owned directory identity, independent of mounts and libc."""
 
+import fcntl
 import os
 from pathlib import Path
 import stat
@@ -21,6 +22,9 @@ def read(fd):
     """Read only a bounded regular marker in the already opened directory."""
     marker = os.open(NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
     try:
+        # A new marker is visible before its creator removes the temporary
+        # hard link. Wait for that publication to finish before sampling ctime.
+        fcntl.flock(marker, fcntl.LOCK_SH)
         before = os.fstat(marker)
         if not stat.S_ISREG(before.st_mode) or before.st_size != SIZE:
             raise InvalidData('Invalid storage directory marker')
@@ -53,7 +57,8 @@ def provision(path):
         temporary = NAME + '.' + token + '.tmp'
         created = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=fd)
         try:
-            with os.fdopen(created, 'wb') as output:
+            fcntl.flock(created, fcntl.LOCK_EX)
+            with os.fdopen(created, 'wb', closefd=False) as output:
                 output.write(body(token))
                 output.flush()
                 os.fsync(output.fileno())
@@ -64,8 +69,11 @@ def provision(path):
                 pass
             os.fsync(fd)
         finally:
-            os.unlink(temporary, dir_fd=fd)
-            os.fsync(fd)
+            try:
+                os.unlink(temporary, dir_fd=fd)
+                os.fsync(fd)
+            finally:
+                os.close(created)
         return read(fd)
     finally:
         os.close(fd)
