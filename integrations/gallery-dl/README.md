@@ -159,6 +159,15 @@ attempt. Child/finalizer contention cannot report a successful traversal;
 completed files and their durable delivery events remain available on retry.
 Deploy the corresponding server retry handling before updating producers.
 
+Reddit can configure yt-dlp's browser transport separately from gallery-dl's
+`browser` setting. The `gallery` extra includes yt-dlp's supported `curl-cffi`
+extra. For Reddit downloads, `extractor.reddit.ytdl.cmdline-args` can contain
+`["--impersonate", "chrome"]`; gallery-dl forwards its scoped cookies through the
+normal download bridge. This applies to Reddit's yt-dlp downloads without
+changing other extractor categories. The two projects use different HTTP stacks,
+so Chrome presets are equivalent browser profiles rather than identical TLS
+configurations. Retained work needs the usual reviewed configuration upgrade.
+
 The Twitter adapter also preserves `reply_user_id` from the raw API response,
 alongside the extractor's `conversation_id` and `reply_id`. Native capture intake
 uses these exact numeric account and post IDs for navigable threads and shared

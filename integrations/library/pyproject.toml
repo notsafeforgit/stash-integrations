@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stash-library"
-version = "0.6.4"
+version = "0.6.5"
 description = "Optional Stash library tagging, title and scan API clients"
 requires-python = ">=3.12"
 dependencies = []

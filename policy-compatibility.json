@@ -4,5 +4,5 @@
   "execution_contract": "stash-worker-execution-v1",
   "implementation_sha256": "e541194921ddb4aa6abd79c2400bab2b8a2928c66e56aa3f705b85fc4eecbac7",
   "decision": "compatible",
-  "reason": "Add opt-in structured n8n completion diagnostics and prevent inspection from creating a missing outbox. Temporary failures remain retryable; invalid retained work requires review. Existing admission and strict inspection exit codes, queued policies, source coverage, execution/capture contracts, schema 19 and receipt semantics remain unchanged. Add credential-free logs distinguishing network-security blocks from HTTP 429 responses."
+  "reason": "Package yt-dlp with its supported curl-cffi extra so reviewed configurations can opt into browser impersonation through the existing gallery-dl bridge. Producer implementation bytes, admission meaning, coverage, cursors, execution/capture contracts, schema 19 and receipt semantics are unchanged. Browser settings remain explicit configuration and require normal policy upgrades for retained work."
 }

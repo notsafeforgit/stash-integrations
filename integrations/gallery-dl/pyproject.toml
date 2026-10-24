@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stash-ingest"
-version = "0.6.4"
+version = "0.6.5"
 description = "Durable gallery-dl producer for the native Stash ingestion API"
 requires-python = ">=3.12"
 
 [project.optional-dependencies]
 gallery = [
   "gallery-dl @ git+https://codeberg.org/mikf/gallery-dl.git@07f5d2a11b41f5531ec5f7b54f9199ca6bb5fbe0",
-  "yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@897341241f2bfb2439fe0367f4c7c9ccd29a3828",
+  "yt-dlp[curl-cffi] @ git+https://github.com/yt-dlp/yt-dlp.git@897341241f2bfb2439fe0367f4c7c9ccd29a3828",
 ]
 
 [project.scripts]
