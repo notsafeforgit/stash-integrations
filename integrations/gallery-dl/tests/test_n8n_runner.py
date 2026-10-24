@@ -1,8 +1,10 @@
 from contextlib import closing, redirect_stdout
 import io
+import errno
 import json
 from pathlib import Path
 import tempfile
+import sqlite3
 import unittest
 from unittest.mock import patch
 import uuid
@@ -86,6 +88,60 @@ class N8nRunnerTests(unittest.TestCase):
             self.assertEqual(self.invoke(["--inspect", uuid.uuid4().hex])[0], 1)
         with closing(Outbox(self.database, self.base[3], PRODUCER)) as box:
             self.assertEqual(BackfillCalls(box).summary()["calls"], 0)
+
+    def test_monitor_retries_storage_errors_and_reopens_the_original_call(self):
+        _, first = self.invoke(["--mode", "reddit-new", "--identity", "Example", "--call", self.call,
+                                "--profile", str(self.path)])
+        args = ["--inspect", first["token"], "--monitor"]
+        busy = sqlite3.OperationalError("private-first-value")
+        busy.sqlite_errorcode, busy.sqlite_errorname = sqlite3.SQLITE_BUSY, "SQLITE_BUSY"
+        for error in (OSError(errno.EACCES, "private-first-value"), busy):
+            with patch("stash_ingest.n8n_runner.Outbox", side_effect=error):
+                code, result = self.invoke(args)
+            self.assertEqual(code, 0, "the workflow must retain the diagnostic")
+            self.assertTrue(result["backfill_pending"])
+            self.assertFalse(result["command_failed"])
+            self.assertTrue(result["monitor_error"]["retryable"])
+            self.assertEqual(result["monitor_error"]["stage"], "open_outbox")
+            self.assertEqual(result["token"], first["token"])
+        with patch.object(Client, "capabilities", side_effect=Unavailable("network_unavailable")):
+            code, result = self.invoke(args)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["call_uuid"], self.call)
+        self.assertTrue(result["backfill_pending"])
+        with closing(Outbox(self.database, self.base[3], PRODUCER)) as box:
+            self.assertEqual(BackfillCalls(box).summary()["calls"], 1)
+
+    def test_inspection_never_creates_a_replacement_for_a_missing_outbox(self):
+        code, result = self.invoke(["--inspect", uuid.uuid4().hex, "--monitor"])
+        self.assertEqual(code, 0)
+        self.assertTrue(result["backfill_pending"])
+        self.assertEqual(result["monitor_error"]["os_error"], "ENOENT")
+        self.assertFalse(self.database.exists())
+        self.assertEqual(self.invoke(["--inspect", uuid.uuid4().hex])[0], 1)
+        self.assertFalse(self.database.exists())
+
+    def test_monitor_preserves_terminal_validation_and_corruption_errors(self):
+        self.invoke(["--mode", "reddit-new", "--identity", "Example", "--call", self.call,
+                     "--profile", str(self.path)])
+        code, result = self.invoke(["--inspect", uuid.uuid4().hex, "--monitor"])
+        self.assertEqual(code, 0)
+        self.assertFalse(result["backfill_pending"])
+        self.assertTrue(result["command_failed"])
+        self.assertEqual(result["monitor_error"]["code"], "validation_failed")
+        self.database.write_bytes(b'not a sqlite database')
+        code, result = self.invoke(["--inspect", uuid.UUID(self.call).hex, "--monitor"])
+        self.assertEqual(code, 0)
+        self.assertTrue(result["command_failed"])
+        self.assertFalse(result["monitor_error"]["retryable"])
+        self.assertEqual(result["monitor_error"]["sqlite_name"], "SQLITE_NOTADB")
+
+    def test_monitor_cannot_change_admission_or_reviewed_retry_semantics(self):
+        for args in (["--monitor"], ["--inspect", uuid.uuid4().hex, "--monitor", "--strict"],
+                     ["--inspect", uuid.uuid4().hex, "--monitor", "--retry-reviewed"]):
+            with self.assertRaises(SystemExit):
+                self.invoke(args)
+        self.assertFalse(self.database.exists())
 
     def test_dispatch_remains_pending_when_only_a_backfill_history_check_is_outstanding(self):
         self.invoke(["--mode", "reddit-new", "--identity", "Example", "--call", self.call, "--profile", str(self.path)])

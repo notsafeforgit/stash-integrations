@@ -31,6 +31,14 @@ pinned release of these clients. Python unit tests and package releases live her
 
 ## Development and releases
 
+Native n8n completion workflows can use `stash-ingest-n8n --inspect=TOKEN
+--monitor` to retain typed retry/review diagnostics even when storage or API
+access fails. The command never creates a missing outbox, changes the caller
+token, or treats a failed check as scrape completion. Ordinary admission and
+strict inspection retain their exit-code contracts. Worker stderr records
+`source_request_blocked` with HTTP status and `network_security` or `http_429`,
+without website response bodies, URLs or credentials.
+
 ```sh
 make setup test
 make build

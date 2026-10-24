@@ -1,4 +1,7 @@
 import unittest
+import io
+import json
+from contextlib import redirect_stderr
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -48,6 +51,19 @@ class BudgetTests(unittest.TestCase):
 
 
 class NetworkSecurityTests(unittest.TestCase):
+    def test_block_diagnostics_retain_reason_without_response_content(self):
+        for response, reason in ((self.response(), 'network_security'), (self.response(429), 'http_429')):
+            response.url = 'https://private-token@example.invalid'
+            output = io.StringIO()
+            with redirect_stderr(output):
+                result = request_budget.response_result({'request_uuid': 'request', 'source_scope': 'service:reddit'}, response)
+            logged = json.loads(output.getvalue())
+            self.assertEqual(logged['block_reason'], reason)
+            self.assertEqual(logged['http_status'], result['status'])
+            self.assertEqual(logged['request_uuid'], 'request')
+            self.assertNotIn('private-token', output.getvalue())
+            self.assertNotIn('blocked by network security', output.getvalue())
+
     def response(self, status=403, content_type='text/html', body=b"<div>You've been blocked by network security.</div>"):
         import requests
         result = requests.Response()

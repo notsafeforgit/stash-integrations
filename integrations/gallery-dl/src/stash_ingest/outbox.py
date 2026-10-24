@@ -44,7 +44,7 @@ class Delivery:
 
 class Outbox:
     def __init__(self, path, endpoint, producer, *, max_events=10000,
-                 max_bytes=512 << 20, clock=time.time):
+                 max_bytes=512 << 20, clock=time.time, create=True):
         self.endpoint = origin(endpoint)
         self.producer = identifier(producer)
         if type(max_events) is not int or max_events < 1 or type(max_bytes) is not int or max_bytes < 1:
@@ -54,9 +54,12 @@ class Outbox:
         self.path = path
         # The directory is provisioned by the runner. Do not silently create a
         # replacement on an absent mount or follow a substituted database link.
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        if type(create) is not bool:
+            raise InvalidData("Outbox creation choice must be boolean")
+        fd = os.open(path, os.O_RDWR | (os.O_CREAT if create else 0) | os.O_NOFOLLOW, 0o600)
         os.close(fd)
-        self.db = sqlite3.connect(path, timeout=15, isolation_level=None)
+        self.db = sqlite3.connect(path.as_uri() + ("?mode=rwc" if create else "?mode=rw"),
+                                  uri=True, timeout=15, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         try:
             # Another first opener can publish the schema between these reads.

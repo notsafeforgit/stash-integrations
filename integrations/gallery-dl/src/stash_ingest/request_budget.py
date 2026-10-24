@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import math
 import html
+import json
 import re
+import sys
 from urllib.parse import urlsplit
 import uuid
 
@@ -67,6 +69,13 @@ def response_result(permit, response):
               'retry_after_seconds': 0 if response is None else retry_after(response)}
     if response is not None and network_security(response, permit['source_scope']):
         result['block_reason'] = 'network_security'
+    if result['status'] == 429 or result.get('block_reason'):
+        # Persist the distinction in worker logs without website URLs, cookies,
+        # response bodies or account data. Aggregate pacing counters combine it.
+        print(json.dumps({'event': 'source_request_blocked', 'request_uuid': permit['request_uuid'],
+                          'scope': permit['source_scope'], 'http_status': result['status'],
+                          'block_reason': result.get('block_reason', 'http_429'),
+                          'retry_after_seconds': result['retry_after_seconds']}, sort_keys=True), file=sys.stderr)
     return result
 
 

@@ -15,6 +15,7 @@ from . import backfills
 from .backfill_calls import BackfillCalls, advance_once
 from .client import Client, Unavailable
 from .configuration import Configuration
+from .command_errors import describe
 from .encoding import InvalidData, digest, encode, identifier
 from .outbox import Capacity, Outbox
 from .n8n_receipts import LegacyReceipts
@@ -37,6 +38,8 @@ def main(argv=None):
     parser.add_argument("--producer", default=os.environ.get("STASH_INGEST_PRODUCER"))
     parser.add_argument("--token-env", default="STASH_INGEST_TOKEN")
     parser.add_argument("--inspect", help="Retained native or explicitly imported legacy result token")
+    parser.add_argument("--monitor", action="store_true",
+                        help="With --inspect, return structured retry/review diagnostics to a completion workflow")
     parser.add_argument("--mode", choices=backfills.MODES)
     parser.add_argument("--identity")
     parser.add_argument("--call", help="Explicit stable caller UUID instead of n8n execution context")
@@ -49,13 +52,18 @@ def main(argv=None):
     parser.add_argument("--strict", action="store_true", help="Exit 2 while pending, 1 on failure, 0 after accepted completion/skip")
     parser.add_argument("--retry-reviewed", action="store_true", help="Recheck this same reviewed caller and its original tickets")
     args = parser.parse_args(argv)
+    if args.monitor and (not args.inspect or args.strict or args.retry_reviewed):
+        parser.error("--monitor requires --inspect and cannot submit or retry reviewed work")
+    stage = "configuration"
     try:
         if not all((args.outbox, args.endpoint, args.producer)):
             raise InvalidData("Configure the native n8n outbox, endpoint and producer")
         context = (args.workflow, args.execution, args.node, args.item)
-        with closing(Outbox(args.outbox, args.endpoint, args.producer)) as box:
+        stage = "open_outbox"
+        with closing(Outbox(args.outbox, args.endpoint, args.producer, create=not bool(args.inspect))) as box:
             calls = BackfillCalls(box)
             if args.inspect:
+                stage = "inspect_call"
                 if (not re.fullmatch(r"[0-9a-f]{32}", args.inspect) or any(item is not None for item in context)
                         or any((args.mode, args.identity, args.call, args.profile, args.until))):
                     raise InvalidData("Inspection requires only a retained result token")
@@ -105,14 +113,30 @@ def main(argv=None):
                 if not args.strict:
                     print(json.dumps({"token": uuid.UUID(call).hex, "call_uuid": call, "state": "recorded"}, sort_keys=True))
                     return 0
+            stage = "advance_call"
             advance_once(calls, Client(args.endpoint, args.producer, token_env=args.token_env), call)
+            stage = "read_result"
             result = calls.result(call)
             print(json.dumps(result, sort_keys=True))
             return result["exit_code"] if args.strict else 0
-    except (InvalidData, Unavailable, Capacity) as error:
-        code = str(error)
-    except (OSError, sqlite3.Error):
-        code = "Native n8n inputs or outbox storage are unavailable"
+    except Exception as error:
+        if args.monitor:
+            detail = {**describe(error), "stage": stage}
+            retry = detail["retryable"]
+            print(json.dumps({"token": args.inspect, "state": "monitor_unavailable" if retry else "monitor_review",
+                              "command_failed": not retry, "backfill_pending": retry,
+                              "exit_code": 2 if retry else 1, "network_blocked": False,
+                              "stdout_tail": "Completion check will retry." if retry else "Completion check requires review.",
+                              "stderr_tail": json.dumps(detail, sort_keys=True), "monitor_error": detail}, sort_keys=True))
+            # This acknowledges delivery of a diagnostic, not scrape success.
+            # n8n preserves stdout only when its command node exits normally.
+            return 0
+        if isinstance(error, (InvalidData, Unavailable, Capacity)):
+            code = str(error)
+        elif isinstance(error, (OSError, sqlite3.Error)):
+            code = "Native n8n inputs or outbox storage are unavailable"
+        else:
+            raise
     print(json.dumps({"command_failed": True, "backfill_pending": False, "exit_code": 1,
                       "network_blocked": False, "stdout_tail": "", "stderr_tail": code}, sort_keys=True))
     return 1
