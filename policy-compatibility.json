@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "fc04bb1e58608cb30af6986f9ff779e3fc995bc1ed808f5d236acb515b069d5f",
+  "implementation_sha256": "2ba6a2f46182e1ce749b51a792134a1c2889d4ac7c02a8bd88ef07cdffbf4544",
   "decision": "compatible",
-  "reason": "Persist subscription scheduling intent before Stash lookup and retry transient API outages through the dispatcher. Original caller identity, policy and publication window remain frozen; source execution, capture, coverage and cursor semantics are unchanged. Producer schema 20 and its archive reader ship together; all shared-outbox clients must upgrade before activation."
+  "reason": "Report safe structured SQLite/OS errors and producer code locations at command, source-execution and background-delivery boundaries. Preserve source run identity for diagnostics. This is observability only: queue schema 20, execution/capture contracts, admitted commands, exit codes, retry/review classification, coverage and cursors are unchanged."
 }

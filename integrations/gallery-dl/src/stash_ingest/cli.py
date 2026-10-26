@@ -9,6 +9,7 @@ import sqlite3
 import sys
 
 from .client import Client, Unavailable, drain_once
+from .command_errors import report
 from .encoding import InvalidData
 from .outbox import Capacity, Outbox
 from .run_queue import RunQueue, submit_once
@@ -160,8 +161,10 @@ def main(argv=None):
     detail_dispatch.add_argument("--profile", help="Enable source access with this detail profile; otherwise deliver saved evidence only")
     args = parser.parse_args(argv)
     box = None
+    stage = "open_outbox"
     try:
         box = Outbox(args.outbox, args.endpoint, args.producer)
+        stage = "command"
         if args.command == "retire-enrichment-progress":
             from .dispatch_retention import retire_enrichment_policies
             print(json.dumps(retire_enrichment_policies(box, args.retired_policy, apply=args.apply), sort_keys=True))
@@ -400,8 +403,8 @@ def main(argv=None):
     except (InvalidData, Unavailable, Capacity, SourcePaused) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    except (OSError, sqlite3.Error):
-        print("Outbox storage is unavailable; delivery was not completed", file=sys.stderr)
+    except (OSError, sqlite3.Error) as error:
+        report(error, stage=stage, command=args.command)
         return 1
     finally:
         if box is not None:

@@ -4,6 +4,7 @@ import sqlite3
 import threading
 
 from .client import Client, Unavailable, drain_once
+from .command_errors import report
 from .encoding import InvalidData, encode, identifier
 from .outbox import Capacity, Conflict, Outbox
 from .producer import Producer
@@ -14,25 +15,29 @@ from .runs import RunLease, SourceFailure, SourcePaused, SourceTurnComplete
 class Delivery:
     """The drainer owns its SQLite connection and respects durable retry times."""
 
-    def __init__(self, box, client):
+    def __init__(self, box, client, *, run_uuid=None):
         self.path, self.endpoint, self.producer = box.path, box.endpoint, box.producer
         self.client = Client(client.endpoint, client.producer, token_env=client.token_env, timeout=client.timeout)
         self.stop = threading.Event()
         self.thread = None
         self.failure = None
+        self.run_uuid = run_uuid
 
     def start(self):
         def deliver():
             box = None
+            stage = "delivery_open_outbox"
             try:
                 box = Outbox(self.path, self.endpoint, self.producer)
+                stage = "delivery_drain"
                 while not self.stop.is_set():
                     result = drain_once(box, self.client)
                     self.stop.wait(0.1 if result["acknowledged"] else 2)
-            except Exception:
-                # A failed background thread must become visible at the next
-                # source boundary without printing response bodies or secrets.
+            except Exception as error:
+                # Preserve the cause before the source boundary converts this
+                # thread failure into the existing durable delivery outcome.
                 self.failure = "outbox_delivery_failed"
+                report(error, stage=stage, run_uuid=self.run_uuid)
             finally:
                 if box is not None:
                     box.close()
@@ -100,7 +105,7 @@ def execute(box, client, configuration, run_uuid):
         # The executable reports JSON on stdout; downloader progress belongs in
         # the caller's log stream. This does not affect retained source evidence.
         config.set(("output",), "mode", "null")
-        delivery = Delivery(box, client)
+        delivery = Delivery(box, client, run_uuid=run_uuid)
         lease = RunLease.claim(client, run_uuid, configuration.policy_sha256)
         if lease is None:
             return {"state": "waiting", "run_uuid": run_uuid}
@@ -150,11 +155,13 @@ def execute(box, client, configuration, run_uuid):
             outcome, error = "retry", "worker_publication_busy"
         except (InvalidData, exception.GalleryDLException):
             outcome, error = "deferred", "worker_configuration_or_source"
-        except (OSError, sqlite3.Error):
+        except (OSError, sqlite3.Error) as exc:
+            report(exc, stage="source_execute", run_uuid=run_uuid)
             outcome, error = "retry", "worker_storage_unavailable"
         except (KeyboardInterrupt, SystemExit):
             outcome, error = "retry", "worker_interrupted"
-        except Exception:
+        except Exception as exc:
+            report(exc, stage="source_execute", run_uuid=run_uuid)
             outcome, error = "retry", "worker_execution_failed"
         finally:
             try:

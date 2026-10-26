@@ -1,8 +1,10 @@
 """Worker ownership and completion, using the real gallery-dl download loop."""
 
+import errno
+import io
 import json
 import os
-from contextlib import closing
+from contextlib import closing, redirect_stderr
 from pathlib import Path
 import subprocess
 import sys
@@ -271,6 +273,21 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.run_worker()["state"], "source_succeeded")
         self.assertEqual(len(self.downloaded), 2, "completed files must not be downloaded again")
         self.lease.finish.assert_called_once_with("succeeded", error_code="")
+
+    def test_source_storage_error_reports_cause_without_changing_retry_outcome(self):
+        task = Mock()
+        task.run.side_effect = OSError(errno.EIO, "private-token", "/private-path")
+        self.lease.finish.return_value = {"state": "queued"}
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            result = self.run_worker(lambda *a, **kw: task)
+        detail = json.loads(stderr.getvalue())
+        self.assertEqual((detail["stage"], detail["run_uuid"]), ("source_execute", RUN))
+        self.assertEqual(detail["error"]["os_error"], "EIO")
+        self.assertNotIn("private-token", stderr.getvalue())
+        self.assertNotIn("/private-path", stderr.getvalue())
+        self.assertEqual((result["state"], result["error_code"]), ("retry", "worker_storage_unavailable"))
+        self.lease.finish.assert_called_once_with("retry", error_code="worker_storage_unavailable")
 
     def test_download_access_storage_and_interruption_failures_are_not_success(self):
         for failure, state, code in ((4, "retry", "source_download_failed"),

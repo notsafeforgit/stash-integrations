@@ -39,6 +39,14 @@ strict inspection retain their exit-code contracts. Worker stderr records
 `source_request_blocked` with HTTP status and `network_security` or `http_429`,
 without website response bodies, URLs or credentials.
 
+Worker storage failures and background delivery exceptions emit one JSON stderr
+record with `event: stash_worker_error`. The record includes the operation stage,
+command or source-run UUID where available, exception type, extended SQLite code
+and name or OS errno and name, and up to eight producer code locations. The service
+journal supplies the time and process. No raw exception messages, source lines,
+locals, private paths, SQL values or response bodies are logged. These diagnostics
+do not change exit codes, retry/review decisions, producer schema or queued work.
+
 ```sh
 make setup test
 make build
