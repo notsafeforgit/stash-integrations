@@ -234,6 +234,7 @@ class RunQueueTests(unittest.TestCase):
             self.box.db.set_progress_handler(count, 1)
             try:
                 self.assertEqual(self.queue.active_tickets(), 1)
+                self.assertEqual(self.queue.active_configurations(), 1)
             finally:
                 self.box.db.set_progress_handler(None, 0)
             return executed
@@ -242,8 +243,8 @@ class RunQueueTests(unittest.TestCase):
         active = self.claim()
         before = steps()
         self.queue.admit(active, admission(active.body))
-        for _ in range(500):
-            self.queue.enqueue(request(), ticket_uuid=str(uuid.uuid4()))
+        for i in range(500):
+            self.queue.enqueue(request(collection_revision=i + 2), ticket_uuid=str(uuid.uuid4()))
             delivery = self.claim()
             self.queue.admit(delivery, admission(delivery.body))
         self.queue.enqueue(request(), ticket_uuid=str(uuid.uuid4()))

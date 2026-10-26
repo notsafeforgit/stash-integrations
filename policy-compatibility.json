@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "353e95ff0646ff0d6223f876965cb23b7fad091ae82220e375ba589b866cdeda",
+  "implementation_sha256": "a8f3f52bac42ab61658c5611f3316a9537010ec886996b3673efe5869da09bfa",
   "decision": "compatible",
-  "reason": "Compatible queue maintenance: schema 21 adds a reverse ticket index, admission counts only active work, current queues open without a writer lock, and SQLite contention retries durable delivery instead of holding source runs. Keep original request/event identities, receipt fencing, source windows, policies and cursor semantics. Archive readers accept schema 21; deployment upgrades every queue reader before writers."
+  "reason": "Compatible queue maintenance: explicitly use the existing partial indexes for active configurations and unassigned tickets as well as the schema-21 reverse ticket index. SQLite planner changes cannot turn per-admission checks into receipt-history scans. Preserve every execution/capture contract, source window, policy, request, receipt and cursor; this repairs bounded query work on production SQLite 3.53.4."
 }
