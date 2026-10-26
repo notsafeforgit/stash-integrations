@@ -86,6 +86,6 @@ all shared-outbox clients before schema-20 workers; an old reader rejects a newe
 queue. Existing schema-19 and earlier archives retain their original verification.
 
 Schema 21 adds only a reverse index on source request/caller ticket membership.
-Version 0.6.9 accepts it using the same receipt and scheduling verification as
+Version 0.6.10 accepts it using the same receipt and scheduling verification as
 schema 20. No archive format or content semantics change. Deploy the new reader
 and shared-outbox command clients before workers migrate their queues.

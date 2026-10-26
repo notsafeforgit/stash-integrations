@@ -3635,6 +3635,6 @@ report `retry/outbox_busy` (exit 2) on contention. New admissions still fail vis
 if persistence fails, and disk, permission and corruption errors remain diagnostic
 failures rather than successful service exits.
 
-Deploy v0.6.9 archive readers and all shared-outbox clients before schema-21 workers.
+Deploy v0.6.10 archive readers and all shared-outbox clients before schema-21 workers.
 The migration only adds an index; producer UUIDs, policies, windows, event bytes and
 receipts are unchanged. Earlier schema archives retain their verification rules.

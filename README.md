@@ -95,7 +95,7 @@ Requests are saved before API lookup and resumed by ordinary workers after Stash
 maintenance. Deploy the matching archive reader and every shared-outbox client
 before enabling the new workers; existing source policies and receipts are retained.
 
-Release v0.6.9 advances the producer to schema 21 with an index from immutable
+Release v0.6.10 advances the producer to schema 21 with an index from immutable
 run requests to caller tickets. Admission capacity traverses only unfinished
 requests and their indexed links, independent of retained receipt history. Current
 queues validate their binding in a read snapshot and need no writer lock to open.
