@@ -45,6 +45,7 @@ class Producer:
         self.failure_code = None
         self.source_failure = None
         self.publication_failure = None
+        self.storage_failure = None
         self.window = SourceWindow(run.get("window"))
 
         self.path_prefix = run["path_prefix"]
@@ -87,6 +88,8 @@ class Producer:
         self.lease.check()
         self.root.verify()
         self.configuration_check()
+        if self.storage_failure is not None:
+            raise self.storage_failure
         if self.source_failure is not None:
             raise self.source_failure
         if self.publication_failure is not None:

@@ -11,7 +11,7 @@ import sys
 from .client import Client, Unavailable, drain_once
 from .command_errors import report
 from .encoding import InvalidData
-from .outbox import Capacity, Outbox
+from .outbox import Capacity, Outbox, is_contention
 from .run_queue import RunQueue, submit_once
 from .runs import SourcePaused
 
@@ -405,6 +405,9 @@ def main(argv=None):
         return 1
     except (OSError, sqlite3.Error) as error:
         report(error, stage=stage, command=args.command)
+        if is_contention(error) and args.command in {"drain", "dispatch", "dispatch-all", "submit-runs", "resolve-sources"}:
+            print(json.dumps({"state": "retry", "error_code": "outbox_busy"}, sort_keys=True))
+            return 2
         return 1
     finally:
         if box is not None:

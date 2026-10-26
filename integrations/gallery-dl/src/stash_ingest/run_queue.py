@@ -61,10 +61,14 @@ class RunQueue:
         )""").fetchone()[0]
 
     def active_tickets(self):
+        # Start with the partial index of unfinished requests, then probe their
+        # ticket links. Admission holds the writer lock; retained receipt history
+        # must not increase the work done for each new caller.
         return self.db.execute("""SELECT count(*) FROM (
             SELECT uuid FROM run_intent_tickets WHERE unassigned_count>0
-            UNION SELECT link.ticket_uuid FROM run_ticket_requests link
-                JOIN run_requests r ON r.request_uuid=link.request_uuid WHERE r.state!='admitted'
+            UNION SELECT link.ticket_uuid FROM run_requests r INDEXED BY one_run_submission
+                CROSS JOIN run_ticket_requests link INDEXED BY request_run_tickets
+                ON link.request_uuid=r.request_uuid WHERE r.state!='admitted'
         )""").fetchone()[0]
 
     def _save_windows(self, intent, pending):

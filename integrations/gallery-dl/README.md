@@ -3615,3 +3615,26 @@ before opening it with schema-20 workers. Older binaries deliberately reject the
 new schema. This includes n8n command bridges and host maintenance clients, not
 only background workers. Queued source windows, policies, receipts and website
 backoff contracts are unchanged. Historical schema-19 archives remain supported.
+
+### Queue contention and retained history
+
+Producer schema 21 adds `request_run_tickets(request_uuid,ticket_uuid)`. The capacity
+query starts with the partial index of unfinished submissions and probes these
+links, deduplicating callers that still have unassigned coverage. Historical
+admissions remain durable without adding work to each new admission. Opening an
+up-to-date queue validates the binding in a read transaction; initialization and
+upgrades still take the writer lock and commit atomically.
+
+The background event drainer retries SQLite BUSY/LOCKED with interruptible delays
+from 0.1 to 2 seconds after the existing SQLite busy timeout. It reclaims durable
+work using the existing leases and receipt fences; it never replays arbitrary
+transaction bodies. Storage errors crossing gallery-dl's exception handling retain
+their cause and make the source attempt retryable, not a source/configuration hold.
+The `drain`, `dispatch`, `dispatch-all`, `submit-runs`, and `resolve-sources` commands
+report `retry/outbox_busy` (exit 2) on contention. New admissions still fail visibly
+if persistence fails, and disk, permission and corruption errors remain diagnostic
+failures rather than successful service exits.
+
+Deploy v0.6.9 archive readers and all shared-outbox clients before schema-21 workers.
+The migration only adds an index; producer UUIDs, policies, windows, event bytes and
+receipts are unchanged. Earlier schema archives retain their verification rules.

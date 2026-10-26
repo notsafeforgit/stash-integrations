@@ -5,6 +5,7 @@ from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -13,7 +14,7 @@ from stash_ingest.client import Client
 from stash_ingest.command_errors import describe, report
 from stash_ingest.encoding import InvalidData, encode
 from stash_ingest.outbox import Outbox
-from stash_ingest.worker import Delivery
+from stash_ingest.worker import Delivery, DeliveryFailure
 from helpers import PRODUCER, RUN, capture
 
 
@@ -59,12 +60,13 @@ class WorkerDiagnosticsTests(unittest.TestCase):
             owner.db.execute('BEGIN IMMEDIATE')
             try:
                 with self.fast_busy_timeout():
-                    status, stdout, stderr = self.invoke(main, ['status'])
+                    status, stdout, stderr = self.invoke(main, ['drain'])
             finally:
                 owner.db.execute('ROLLBACK')
-            self.assertEqual((status, stdout), (1, ''))
+            self.assertEqual(status, 2)
+            self.assertEqual(json.loads(stdout), {'state': 'retry', 'error_code': 'outbox_busy'})
             value = self.diagnostic(stderr)
-            self.assertEqual((value['command'], value['stage']), ('status', 'open_outbox'))
+            self.assertEqual((value['command'], value['stage']), ('drain', 'command'))
             self.assertEqual(value['error']['sqlite_code'], sqlite3.SQLITE_BUSY)
             self.assertEqual(value['error']['sqlite_name'], 'SQLITE_BUSY')
             self.assertTrue(any(f['module'] == 'stash_ingest.outbox' and f['function'] == 'transaction'
@@ -102,30 +104,70 @@ class WorkerDiagnosticsTests(unittest.TestCase):
         self.assertEqual((value['command'], value['stage']), ('drain', 'command'))
         self.assertEqual((value['error']['errno'], value['error']['os_error']), (errno.ENOSPC, 'ENOSPC'))
 
-    def test_background_open_contention_reports_before_source_boundary_and_retains_event(self):
+    def test_background_contention_retries_then_delivers_the_same_event(self):
         event = encode(capture())
         client = Client(self.endpoint, PRODUCER, timeout=1)
+        from helpers import receipt
+        from stash_ingest.encoding import decode
+        delivered, contended = threading.Event(), threading.Event()
+        original_report = report
+
+        def diagnostic(*args, **kwargs):
+            value = original_report(*args, **kwargs)
+            contended.set()
+            return value
+
+        def drain(box, client):
+            pending = box.claim(PRODUCER)
+            if pending:
+                self.assertEqual(len(pending), 1)
+                self.assertEqual(pending[0].body, event)
+                box.acknowledge(pending[0], receipt(decode(event)))
+                delivered.set()
+            return {"acknowledged": len(pending)}
+
         with closing(Outbox(self.path, self.endpoint, PRODUCER)) as owner:
             owner.enqueue(event)
             owner.db.execute('BEGIN IMMEDIATE')
             stderr = io.StringIO()
-            try:
-                with self.fast_busy_timeout(), redirect_stderr(stderr):
-                    delivery = Delivery(owner, client, run_uuid=RUN)
-                    delivery.start()
-                    delivery.thread.join(5)
-                    self.assertFalse(delivery.thread.is_alive())
+            with self.fast_busy_timeout(), redirect_stderr(stderr), \
+                    patch('stash_ingest.worker.report', side_effect=diagnostic), \
+                    patch('stash_ingest.worker.drain_once', side_effect=drain):
+                delivery = Delivery(owner, client, run_uuid=RUN)
+                delivery.start()
+                try:
+                    self.assertTrue(contended.wait(3))
+                    delivery.check()
+                    self.assertTrue(delivery.thread.is_alive())
+                finally:
+                    owner.db.execute('ROLLBACK')
+                try:
+                    self.assertTrue(delivered.wait(3))
+                    delivery.check()
+                finally:
                     delivery.close()
+            for line in stderr.getvalue().splitlines():
+                value = self.diagnostic(line)
+                self.assertEqual(value['stage'], 'delivery_drain')
+                self.assertEqual(value['run_uuid'], RUN)
+                self.assertEqual(value['error']['sqlite_name'], 'SQLITE_BUSY')
+            self.assertIsNone(delivery.failure)
+            self.assertEqual(owner.status()['counts']['acknowledged'], 1)
+            self.assertIsNotNone(owner.receipt(decode(event)['event_uuid']))
+
+    def test_current_queue_opens_and_validates_binding_without_writer_lock(self):
+        from stash_ingest.outbox import Conflict
+        with closing(Outbox(self.path, self.endpoint, PRODUCER)) as owner:
+            owner.db.execute('BEGIN IMMEDIATE')
+            try:
+                with self.fast_busy_timeout():
+                    status, stdout, stderr = self.invoke(main, ['status'])
+                    self.assertEqual((status, stderr), (0, ''))
+                    self.assertIsInstance(json.loads(stdout), dict)
+                    with self.assertRaises(Conflict):
+                        Outbox(self.path, self.endpoint, RUN)
             finally:
                 owner.db.execute('ROLLBACK')
-            value = self.diagnostic(stderr.getvalue())
-            self.assertEqual(value['stage'], 'delivery_open_outbox')
-            self.assertEqual(value['run_uuid'], RUN)
-            self.assertEqual(value['error']['sqlite_name'], 'SQLITE_BUSY')
-            self.assertEqual(delivery.failure, 'outbox_delivery_failed')
-            with self.assertRaises(InvalidData):
-                delivery.check()
-            self.assertEqual(owner.db.execute('SELECT body FROM events').fetchone()[0], event)
 
     def test_background_drain_failure_reports_its_cause_and_run_identity(self):
         client = Client(self.endpoint, PRODUCER, timeout=1)
@@ -142,6 +184,10 @@ class WorkerDiagnosticsTests(unittest.TestCase):
             self.assertEqual((value['stage'], value['run_uuid']), ('delivery_drain', RUN))
             self.assertEqual(value['error']['os_error'], 'EACCES')
             self.assertEqual(delivery.failure, 'outbox_delivery_failed')
+            with self.assertRaises(DeliveryFailure) as failure:
+                delivery.check()
+            self.assertIs(failure.exception.cause, error)
+            self.assertNotIn('private-token', str(failure.exception))
 
     def test_extended_sqlite_code_is_not_collapsed_to_primary_code(self):
         with closing(sqlite3.connect(':memory:')) as db:

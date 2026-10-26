@@ -7,6 +7,7 @@ import os
 from contextlib import closing, redirect_stderr
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -21,7 +22,7 @@ from stash_ingest.gallery import NativeDownloadJob
 from stash_ingest.outbox import Capacity, Conflict, Outbox
 from stash_ingest.publication_lock import PublicationBarrier, PublicationBusy
 from stash_ingest.runs import SourceFailure, SourcePaused, SourceTurnComplete
-from stash_ingest.worker import Delivery, execute
+from stash_ingest.worker import Delivery, DeliveryFailure, execute
 from helpers import PRODUCER, ROOT, RUN, capture, receipt
 from test_configuration import profile_fixture
 from test_gallery import Fixture
@@ -274,6 +275,32 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(len(self.downloaded), 2, "completed files must not be downloaded again")
         self.lease.finish.assert_called_once_with("succeeded", error_code="")
 
+    def test_background_storage_failure_retries_without_source_review(self):
+        error = sqlite3.OperationalError('private-token')
+        error.sqlite_errorcode, error.sqlite_errorname = sqlite3.SQLITE_BUSY, 'SQLITE_BUSY'
+        self.delivery.check.side_effect = DeliveryFailure(error)
+        result = self.run_worker()
+        self.assertEqual((result['state'], result['error_code']), ('retry', 'worker_storage_unavailable'))
+        self.lease.finish.assert_called_once_with('retry', error_code='worker_storage_unavailable')
+
+    def test_real_enqueue_contention_survives_gallery_exception_handling(self):
+        with closing(sqlite3.connect(self.box.path, isolation_level=None)) as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            self.box.db.execute('PRAGMA busy_timeout=1')
+            stderr = io.StringIO()
+            try:
+                with redirect_stderr(stderr):
+                    result = self.run_worker()
+            finally:
+                writer.execute('ROLLBACK')
+            self.assertEqual((result['state'], result['error_code']), ('retry', 'worker_storage_unavailable'))
+            self.assertEqual(json.loads(stderr.getvalue())['error']['sqlite_name'], 'SQLITE_BUSY')
+            self.assertEqual(self.downloaded, [])
+        self.lease.finish.reset_mock()
+        result = self.run_worker()
+        self.assertEqual(result['state'], 'source_succeeded')
+        self.assertEqual(len(self.downloaded), 2)
+
     def test_source_storage_error_reports_cause_without_changing_retry_outcome(self):
         task = Mock()
         task.run.side_effect = OSError(errno.EIO, "private-token", "/private-path")
@@ -424,7 +451,7 @@ class DeliveryTests(unittest.TestCase):
                     delivery.start()
                     delivery.thread.join(5)
                     delivery.close()
-                    with self.assertRaises(InvalidData) as failure:
+                    with self.assertRaises(DeliveryFailure) as failure:
                         delivery.check()
                     self.assertNotIn("private response", str(failure.exception))
 

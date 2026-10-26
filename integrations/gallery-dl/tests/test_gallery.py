@@ -775,7 +775,9 @@ class GalleryTests(unittest.TestCase):
 
         with patch("gallery_dl.postprocessor.exec.ExecPP._exec", side_effect=convert), \
                 patch.object(self.producer, "complete", side_effect=OSError("interrupted before local completion")):
-            self.assertNotEqual(self.task(data).run(), 0)
+            with self.assertRaisesRegex(OSError, "interrupted before local completion") as failure:
+                self.task(data).run()
+            self.assertIs(self.producer.storage_failure, failure.exception)
         self.assertFalse(any(e["kind"] == "file.completed" for e in self.events()))
         self.box.close()
         self.box = Outbox(self.directory / "outbox.sqlite", self.lease.client.endpoint, PRODUCER)

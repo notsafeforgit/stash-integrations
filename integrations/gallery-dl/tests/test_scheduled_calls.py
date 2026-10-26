@@ -144,10 +144,11 @@ class SchedulingTests(unittest.TestCase):
         SourceCalls(self.box).record(self.call, 'b'*64, lambda: {**value, 'targets': ['https://example.invalid/profile']})
         before = SourceCalls(self.box).summary(self.call)
         self.box.db.execute('DROP TABLE scheduled_calls')
+        self.box.db.execute("DROP INDEX request_run_tickets")
         self.box.db.execute('PRAGMA user_version=19')
         self.box.close()
         self.box = self.open()
-        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 20)
+        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 21)
         self.assertEqual(SourceCalls(self.box).summary(self.call), before)
 
     def test_real_http_503_response_is_retained_with_status_but_without_response_secrets(self):

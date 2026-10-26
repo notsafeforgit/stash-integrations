@@ -17,7 +17,14 @@ from .encoding import InvalidData, MAX_BATCH_BYTES, decode, digest, encode, iden
 from .endpoint import origin
 
 APPLICATION_ID = 0x5354494F  # STIO, not a Stash or gallery-dl archive database.
-SCHEMA = 20
+SCHEMA = 21
+
+
+def is_contention(error):
+    """Only SQLite lock contention is eligible for a short automatic retry."""
+    return (isinstance(error, sqlite3.Error)
+            and (getattr(error, "sqlite_errorcode", 0) & 255)
+            in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED))
 
 
 class Conflict(InvalidData):
@@ -70,6 +77,8 @@ class Outbox:
                 version = self.db.execute("PRAGMA user_version").fetchone()[0]
                 application = self.db.execute("PRAGMA application_id").fetchone()[0]
                 tables = self.db.execute("SELECT name FROM sqlite_schema WHERE type='table'").fetchall()
+                if version == SCHEMA and application == APPLICATION_ID:
+                    self._check_binding()
             finally:
                 self.db.execute("ROLLBACK")
             if not ((version in range(1, SCHEMA + 1) and application == APPLICATION_ID)
@@ -78,15 +87,14 @@ class Outbox:
             self.db.execute("PRAGMA foreign_keys=ON")
             self._enable_wal()
             self.db.execute("PRAGMA synchronous=FULL")
-            with self.transaction():
-                # Recheck under the write lock: another runner may have opened
-                # and initialized the same empty queue concurrently.
-                if self.db.execute("PRAGMA user_version").fetchone()[0] == 0:
-                    self._initialize()
-                self._migrate()
-                binding = self.db.execute("SELECT endpoint, producer FROM binding WHERE id=1").fetchone()
-                if tuple(binding) != (self.endpoint, self.producer):
-                    raise Conflict("Outbox belongs to a different Stash origin or producer")
+            if version != SCHEMA:
+                with self.transaction():
+                    # Another opener may have initialized or migrated while we
+                    # waited. Current queues only need the read validation above.
+                    if self.db.execute("PRAGMA user_version").fetchone()[0] == 0:
+                        self._initialize()
+                    self._migrate()
+                    self._check_binding()
             directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:
                 os.fsync(directory)
@@ -95,6 +103,11 @@ class Outbox:
         except BaseException:
             self.db.close()
             raise
+
+    def _check_binding(self):
+        binding = self.db.execute("SELECT endpoint, producer FROM binding WHERE id=1").fetchone()
+        if binding is None or tuple(binding) != (self.endpoint, self.producer):
+            raise Conflict("Outbox belongs to a different Stash origin or producer")
 
     def _enable_wal(self):
         # Concurrent first opens can return SQLITE_BUSY immediately while the
@@ -108,8 +121,7 @@ class Outbox:
                     raise InvalidData("Outbox requires a local filesystem with SQLite WAL support")
                 return
             except sqlite3.OperationalError as error:
-                if ((getattr(error, "sqlite_errorcode", 0) & 255) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
-                        or time.monotonic() >= deadline):
+                if not is_contention(error) or time.monotonic() >= deadline:
                     raise
                 time.sleep(0.025)
 
@@ -198,6 +210,8 @@ class Outbox:
         if version < 20:
             from .scheduled_calls import migrate
             migrate(self.db)
+        if version < 21:
+            self.db.execute("CREATE INDEX request_run_tickets ON run_ticket_requests(request_uuid,ticket_uuid)")
         self.db.execute(f"PRAGMA user_version={SCHEMA}")
 
     def _migrate_dispatch(self):
@@ -252,7 +266,8 @@ class Outbox:
             yield
             self.db.execute("COMMIT")
         except BaseException:
-            self.db.execute("ROLLBACK")
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
             raise
 
     def close(self):

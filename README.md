@@ -45,7 +45,11 @@ command or source-run UUID where available, exception type, extended SQLite code
 and name or OS errno and name, and up to eight producer code locations. The service
 journal supplies the time and process. No raw exception messages, source lines,
 locals, private paths, SQL values or response bodies are logged. These diagnostics
-do not change exit codes, retry/review decisions, producer schema or queued work.
+preserve the exact storage cause without exposing private data. SQLite BUSY/LOCKED
+from durable drain/dispatch commands returns pending (exit 2); other storage errors
+still fail visibly. Background delivery retries contention with interruptible
+backoff, and storage failures retain a retryable source attempt instead of being
+misclassified as source/configuration review.
 
 ```sh
 make setup test
@@ -90,3 +94,11 @@ Release v0.6.7 introduces producer schema 20 for durable subscription scheduling
 Requests are saved before API lookup and resumed by ordinary workers after Stash
 maintenance. Deploy the matching archive reader and every shared-outbox client
 before enabling the new workers; existing source policies and receipts are retained.
+
+Release v0.6.9 advances the producer to schema 21 with an index from immutable
+run requests to caller tickets. Admission capacity traverses only unfinished
+requests and their indexed links, independent of retained receipt history. Current
+queues validate their binding in a read snapshot and need no writer lock to open.
+Upgrade shared-outbox command clients and archive readers before enabling the new
+workers. The index migration is transactional; it changes no queued event, source
+window, policy, receipt or producer identity.

@@ -84,3 +84,8 @@ pending requests, retry leases and their atomic handoff to source callers, and
 includes a scheduling boundary digest in receipt reports. Deploy this reader and
 all shared-outbox clients before schema-20 workers; an old reader rejects a newer
 queue. Existing schema-19 and earlier archives retain their original verification.
+
+Schema 21 adds only a reverse index on source request/caller ticket membership.
+Version 0.6.9 accepts it using the same receipt and scheduling verification as
+schema 20. No archive format or content semantics change. Deploy the new reader
+and shared-outbox command clients before workers migrate their queues.

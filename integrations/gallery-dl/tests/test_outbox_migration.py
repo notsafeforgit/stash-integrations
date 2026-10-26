@@ -16,6 +16,7 @@ from test_run_queue import request, admission
 
 
 def schema_thirteen(db):
+    db.execute("DROP INDEX request_run_tickets")
     db.execute("DROP TABLE IF EXISTS scheduled_calls")
     db.execute("DROP TABLE IF EXISTS missing_media")
     db.execute("DROP TABLE IF EXISTS deleted_media")
@@ -122,6 +123,31 @@ class OutboxMigrationTests(unittest.TestCase):
 
     def open(self):
         return Outbox(self.path, "http://fixture.invalid", PRODUCER, clock=lambda: 1000)
+
+    def test_schema_twenty_index_upgrade_is_atomic_and_preserves_retained_work(self):
+        with closing(self.open()) as box:
+            queue = RunQueue(box)
+            queue.enqueue(request(), ticket_uuid=str(uuid.uuid4()))
+            frozen = queue.claim(str(uuid.uuid4()))
+            before = {table: [tuple(r) for r in box.db.execute('SELECT * FROM ' + table)]
+                      for table in ('events', 'binding', 'run_intents', 'run_requests', 'run_intent_tickets', 'run_ticket_requests')}
+            box.db.execute('DROP INDEX request_run_tickets')
+            box.db.execute('PRAGMA user_version=20')
+        original = Outbox._migrate
+        def interrupted(box):
+            original(box)
+            raise RuntimeError('interrupted before commit')
+        with patch.object(Outbox, '_migrate', interrupted), self.assertRaises(RuntimeError):
+            self.open()
+        self.assertEqual(self.db.execute('PRAGMA user_version').fetchone()[0], 20)
+        self.assertIsNone(self.db.execute("SELECT name FROM sqlite_schema WHERE name='request_run_tickets'").fetchone())
+        for _ in range(2):
+            with closing(self.open()) as box:
+                self.assertEqual(box.db.execute('PRAGMA user_version').fetchone()[0], SCHEMA)
+                for table, rows in before.items():
+                    self.assertEqual([tuple(r) for r in box.db.execute('SELECT * FROM ' + table)], rows)
+                self.assertEqual(RunQueue(box).active_tickets(), 1)
+                self.assertEqual(box.db.execute('PRAGMA foreign_key_check').fetchall(), [])
 
     def test_concurrent_promotion_preserves_pending_dependencies_leases_and_receipts(self):
         def open_queue(_):

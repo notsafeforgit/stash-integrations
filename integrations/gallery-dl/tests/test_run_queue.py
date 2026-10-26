@@ -224,6 +224,33 @@ class RunQueueTests(unittest.TestCase):
         self.assertEqual(limited.active_tickets(), 0)
         self.assertEqual(limited.history(first), history)
 
+    def test_ticket_capacity_work_is_bounded_by_active_tickets_not_receipt_history(self):
+        def steps():
+            executed = 0
+            def count():
+                nonlocal executed
+                executed += 1
+                return 0
+            self.box.db.set_progress_handler(count, 1)
+            try:
+                self.assertEqual(self.queue.active_tickets(), 1)
+            finally:
+                self.box.db.set_progress_handler(None, 0)
+            return executed
+
+        self.queue.enqueue(request(), ticket_uuid=str(uuid.uuid4()))
+        active = self.claim()
+        before = steps()
+        self.queue.admit(active, admission(active.body))
+        for _ in range(500):
+            self.queue.enqueue(request(), ticket_uuid=str(uuid.uuid4()))
+            delivery = self.claim()
+            self.queue.admit(delivery, admission(delivery.body))
+        self.queue.enqueue(request(), ticket_uuid=str(uuid.uuid4()))
+        self.claim()
+        self.assertGreater(self.box.db.execute('SELECT count(*) FROM run_ticket_requests').fetchone()[0], 500)
+        self.assertLessEqual(steps(), before + 100)
+
     def test_concurrent_new_configurations_cannot_overfill_the_last_slot(self):
         def enqueue(index):
             box = self.open()

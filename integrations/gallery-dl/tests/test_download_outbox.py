@@ -138,6 +138,7 @@ class DownloadOutboxTests(unittest.TestCase):
         self.box.db.execute("DROP TABLE IF EXISTS missing_media")
         self.box.db.execute("DROP TABLE IF EXISTS deleted_media")
         self.box.db.execute("DROP TABLE IF EXISTS worker_configurations")
+        self.box.db.execute("DROP INDEX request_run_tickets")
         self.box.db.execute("PRAGMA user_version=15")
         self.box.close()
         self.box = self.open()

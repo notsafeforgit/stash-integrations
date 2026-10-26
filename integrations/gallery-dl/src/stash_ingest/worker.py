@@ -6,10 +6,18 @@ import threading
 from .client import Client, Unavailable, drain_once
 from .command_errors import report
 from .encoding import InvalidData, encode, identifier
-from .outbox import Capacity, Conflict, Outbox
+from .outbox import Capacity, Conflict, Outbox, is_contention
 from .producer import Producer
 from .publication_lock import PublicationBusy
 from .runs import RunLease, SourceFailure, SourcePaused, SourceTurnComplete
+
+
+class DeliveryFailure(RuntimeError):
+    """Safe source-boundary signal retaining the original diagnostic category."""
+
+    def __init__(self, cause):
+        super().__init__("Producer delivery stopped; queued evidence remains durable")
+        self.cause = cause
 
 
 class Delivery:
@@ -21,23 +29,34 @@ class Delivery:
         self.stop = threading.Event()
         self.thread = None
         self.failure = None
+        self.cause = None
         self.run_uuid = run_uuid
 
     def start(self):
         def deliver():
             box = None
-            stage = "delivery_open_outbox"
+            delay = 0.1
             try:
-                box = Outbox(self.path, self.endpoint, self.producer)
-                stage = "delivery_drain"
                 while not self.stop.is_set():
-                    result = drain_once(box, self.client)
+                    stage = "delivery_drain" if box is not None else "delivery_open_outbox"
+                    try:
+                        if box is None:
+                            box = Outbox(self.path, self.endpoint, self.producer)
+                            stage = "delivery_drain"
+                        result = drain_once(box, self.client)
+                    except Exception as error:
+                        report(error, stage=stage, run_uuid=self.run_uuid)
+                        if not is_contention(error):
+                            self.cause = error
+                            self.failure = "outbox_delivery_failed"
+                            return
+                        # No transaction is replayed here. The next drain claims
+                        # durable work under the existing leases/receipt fences.
+                        self.stop.wait(delay)
+                        delay = min(2, delay * 2)
+                        continue
+                    delay = 0.1
                     self.stop.wait(0.1 if result["acknowledged"] else 2)
-            except Exception as error:
-                # Preserve the cause before the source boundary converts this
-                # thread failure into the existing durable delivery outcome.
-                self.failure = "outbox_delivery_failed"
-                report(error, stage=stage, run_uuid=self.run_uuid)
             finally:
                 if box is not None:
                     box.close()
@@ -46,7 +65,7 @@ class Delivery:
 
     def check(self):
         if self.failure:
-            raise InvalidData("Producer delivery stopped; queued evidence remains durable")
+            raise DeliveryFailure(self.cause) from None
 
     def close(self):
         self.stop.set()
@@ -153,6 +172,13 @@ def execute(box, client, configuration, run_uuid):
             outcome, error = "retry", "outbox_capacity"
         except PublicationBusy:
             outcome, error = "retry", "worker_publication_busy"
+        except DeliveryFailure as exc:
+            if isinstance(exc.cause, (OSError, sqlite3.Error)):
+                outcome, error = "retry", "worker_storage_unavailable"
+            elif isinstance(exc.cause, InvalidData):
+                outcome, error = "deferred", "worker_configuration_or_source"
+            else:
+                outcome, error = "retry", "worker_execution_failed"
         except (InvalidData, exception.GalleryDLException):
             outcome, error = "deferred", "worker_configuration_or_source"
         except (OSError, sqlite3.Error) as exc:

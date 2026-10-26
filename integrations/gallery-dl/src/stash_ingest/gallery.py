@@ -4,6 +4,7 @@ import collections
 import copy
 import functools
 import os
+import sqlite3
 from pathlib import Path
 import tempfile
 import types
@@ -106,6 +107,12 @@ def worker_publication(owner, check):
         # the worker can subsequently mistake that traversal for success.
         owner.producer.publication_failure = exc
         raise
+    except requests.exceptions.RequestException:
+        # requests errors inherit OSError but are website/transport failures.
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        owner.producer.storage_failure = exc
+        raise exception.StopExtraction() from None
 
 
 def publication_guard(method):
@@ -302,6 +309,8 @@ class NativeDownloadJob(job.DownloadJob):
         validate_keywords(self.extractor)
         try:
             result = super().run()
+            if self.producer.storage_failure is not None:
+                raise self.producer.storage_failure
             if self.producer.source_failure is not None:
                 raise self.producer.source_failure
             if self.producer.publication_failure is not None:
@@ -397,6 +406,9 @@ class NativeDownloadJob(job.DownloadJob):
         except SourceTurnComplete:
             raise exception.StopExtraction() from None
         except PublicationBusy:
+            raise exception.StopExtraction() from None
+        except sqlite3.Error as exc:
+            self.producer.storage_failure = exc
             raise exception.StopExtraction() from None
         except (InvalidData, Capacity, SourcePaused) as exc:
             self.producer.failure_code = ("outbox_capacity" if isinstance(exc, Capacity) else
