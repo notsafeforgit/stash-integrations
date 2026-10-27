@@ -443,6 +443,23 @@ storage. An unreadable profile or unavailable registry pauses execution. A v1
 installation without a registry keeps its historical strict inline checks,
 including any previously reviewed `filesystem_id`; it is never silently upgraded.
 
+The registry can also bind archive directories for both current and retained jobs:
+
+```json
+"archive_roots": {
+  "/old/archive-directory": {"path": "/persistent/archives", "token": "marker-v1:REVIEWED_UUID"}
+}
+```
+
+Use `stash-ingest-storage --archive-root OLD_DIRECTORY DIRECTORY` during explicit
+storage setup to provision the directory marker. Aliases must be disjoint absolute
+directories. Only `archive` settings relocate; their relative filenames, archive
+keys, prefixes and tables stay unchanged. Markers are checked before execution and
+at source boundaries. A missing mount or unreadable configured archive stops new
+downloads instead of silently starting an empty archive. The dispatcher applies
+the current registry even to saved v1 policies, without rewriting their documents,
+receipts, cursors or policy identities. Back up the archive directory and marker.
+
 `path` bindings relocate archives and other local files without changing policy
 identity. `asset` bindings add `path` and a reviewed `sha256` for local helper
 code. Python postprocessor `function` settings must refer to such an asset,

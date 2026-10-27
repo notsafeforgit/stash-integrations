@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "bb6f63118f3f8337ab4aeb65184b43a8fda63af23357c801ebba5ad368ae603b",
+  "implementation_sha256": "69033a4551e8784af4f4eca0b21810676c520dfd59e3231f88b9d65057ab72bf",
   "decision": "compatible",
-  "reason": "Adds previously unsupported Redgifs profiles and independent Reddit profile metadata. Existing media command meaning, publication windows, checkpoints, archive identities and destinations remain unchanged. Reddit profile observations are additive metadata, gated on server capability, with durable receipts and explicit URL removals preserved. Outbox schema 22 retains all queued bytes and receipts and refuses older drainers; deploy the matching server before upgrading workers. Redgifs directory reuse remains opt-in under the user extractor."
+  "reason": "Adds explicitly reviewed archive-directory storage bindings for current and retained profiles, preserving original policies, filenames, archive keys, destinations, windows, cursors and receipts. Missing reviewed storage or an unreadable configured archive stops transfers instead of bypassing duplicate protection. Existing protocol-v1 start and completion evidence remains unchanged; readers distinguish local file availability from a recorded transfer without rewriting reports."
 }

@@ -417,6 +417,8 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(events[2]["source"]["title"], "Edited caption")
         self.assertEqual(events[3]["source"]["capture_event_uuid"], events[2]["event_uuid"])
         self.assertEqual(events[3]["relative_path"], events[1]["relative_path"])
+        self.assertEqual([event['state'] for event in self.events(kinds=('attachment.download',))],
+                         ['started', 'downloaded', 'downloaded'])
 
     def test_long_unicode_title_preserves_source_id_and_fits_actual_paths(self):
         config.set(("extractor",), "filename", "{title}_{id}_{filename}.{extension}")
@@ -427,6 +429,13 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(capture["source"]["title"], title)
         self.assertTrue(completed["relative_path"].endswith("_postabc123_abc123.jpg"))
         self.assertLessEqual(len(Path(completed["relative_path"]).name.encode()), 255)
+
+    def test_unavailable_configured_archive_never_falls_back_to_downloading(self):
+        task = self.task()
+        task.download = lambda _: self.fail("Unavailable archive allowed a new download")
+        with patch.object(gdl_archive, 'connect', side_effect=OSError('fixture archive unavailable')):
+            self.assertNotEqual(task.run(), 0)
+        self.assertEqual(self.events(kinds=('file.completed',)), [])
 
     def test_archive_skip_without_a_resolved_file_queues_source_only(self):
         task = self.task()

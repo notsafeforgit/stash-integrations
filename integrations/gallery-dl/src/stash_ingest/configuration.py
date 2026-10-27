@@ -145,6 +145,9 @@ def runtime_identity():
 
 
 class Configuration:
+    # Metadata-only subclasses do not select local media/archive storage.
+    storage = None
+
     def __init__(self, filename):
         filename = Path(filename).resolve(strict=True)
         self.filename = filename
@@ -286,6 +289,9 @@ class Configuration:
         if isinstance(value, dict):
             result = {}
             for key, child in value.items():
+                if key == "archive" and self.storage is not None:
+                    result[key] = self.storage.archive_path(self._expand(child, access=access))
+                    continue
                 if key == "cmdline-args" and child:
                     result[key] = []
                     for arg, private in zip(child, private_arguments(child)):
@@ -344,6 +350,8 @@ class Configuration:
                 Configuration._validate(child)
 
     def check(self):
+        if self.storage is not None:
+            self.storage.verify_archives()
         self.root.verify()
         self.locks.verify()
         for path, expected in self.assets.items():

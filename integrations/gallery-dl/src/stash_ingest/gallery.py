@@ -444,6 +444,8 @@ class NativeDownloadJob(job.DownloadJob):
             super().initialize(kwdict)
         finally:
             self._native_initializing = False
+        if self.extractor.config("archive") and self.archive is None:
+            raise InvalidData("Configured download archive is unavailable; downloads remain paused")
         self.hooks = collections.defaultdict(list, self.hooks)
         self._archive_write_file = self._archive_write_skip = self._archive_write_after = False
         # Upstream does not initialize the skip exception when skip is false.

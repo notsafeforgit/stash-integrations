@@ -243,6 +243,9 @@ class Producer:
         if original_path is not None:
             event["transformation"] = {"kind": "gif-to-video", "original_relative_path": self.relative(original_path)}
         event_id = self.outbox.enqueue(encode(event))
+        # Protocol v1 calls local completion "downloaded", including existing
+        # files. Only download() emits "started"; readers use that evidence to
+        # distinguish actual transfers without rewriting durable receipts.
         self.report_download(prepared, "downloaded", file_event_uuid=event_id)
         return event_id
 

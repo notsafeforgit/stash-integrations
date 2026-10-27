@@ -51,7 +51,8 @@ def directory(value, base, path_resolver=local_path):
 
 class StorageBindings:
     def __init__(self, document, filename, *, path_resolver=local_path):
-        if (not isinstance(document, dict) or set(document) != {"schema", "uuid", "roots", "locks"}
+        if (not isinstance(document, dict) or not {"schema", "uuid", "roots", "locks"} <= set(document)
+                or set(document) - {"schema", "uuid", "roots", "locks", "archive_roots"}
                 or document["schema"] != SCHEMA or not isinstance(document["roots"], dict)
                 or not 1 <= len(document["roots"]) <= 256):
             raise InvalidData("Invalid storage registry")
@@ -61,6 +62,20 @@ class StorageBindings:
         self.document = copy.deepcopy(document)
         self.filename = Path(filename)
         self.path_resolver = path_resolver
+        aliases = document.get("archive_roots", {})
+        if not isinstance(aliases, dict) or len(aliases) > 32:
+            raise InvalidData("Archive roots must be a bounded directory mapping")
+        self.archive_roots = []
+        for original, binding in aliases.items():
+            if (not isinstance(original, str) or len(original) > 4096
+                    or not original.startswith('/') or original == '/'
+                    or any(part in {'.', '..'} for part in original.split('/'))
+                    or any(ord(c) < 32 for c in original)):
+                raise InvalidData("An archive alias must be an absolute directory")
+            source = Path(original)
+            if any(source.is_relative_to(old) or old.is_relative_to(source) for old, _ in self.archive_roots):
+                raise InvalidData("Archive aliases must not overlap")
+            self.archive_roots.append((source, directory(binding, self.filename.parent, path_resolver)))
 
     @classmethod
     def load(cls, reference, base, *, path_resolver=local_path, read_document=read_document):
@@ -85,34 +100,63 @@ class StorageBindings:
         return (directory(self.document["roots"][root_uuid], base, self.path_resolver),
                 directory(self.document["locks"], base, self.path_resolver))
 
+    def archive_path(self, value):
+        """Relocate archive storage only; preserve filenames, keys and scrape policy."""
+        head = value[0] if isinstance(value, list) and value else value
+        if not isinstance(head, str) or not head.startswith('/'):
+            return value
+        path = Path(head)
+        for source, target in self.archive_roots:
+            if path.is_relative_to(source):
+                relative = path.relative_to(source)
+                if '..' in relative.parts:
+                    raise InvalidData("Archive path escapes its reviewed directory")
+                target.verify()
+                relocated = str(target.path / relative)
+                return [relocated, *value[1:]] if isinstance(value, list) else relocated
+        return value
+
+    def verify_archives(self):
+        for _, target in self.archive_roots:
+            target.verify()
+
     def verification_files(self, root_uuid):
         """Small identity files that must accompany configuration in backups."""
-        return [bound.verification_file for bound in self.bind(root_uuid) if isinstance(bound, MarkedDirectory)]
+        directories = [*self.bind(root_uuid), *(target for _, target in self.archive_roots)]
+        return list(dict.fromkeys(bound.verification_file for bound in directories if isinstance(bound, MarkedDirectory)))
 
 
-def review(roots, locks, *, registry_uuid=None):
+def review(roots, locks, *, registry_uuid=None, archive_roots=None):
     """Provision directory markers and build configuration; never change a queue."""
     if not 1 <= len(roots) <= 256:
         raise InvalidData("Storage registry needs between one and 256 roots")
     registry_uuid = identifier(registry_uuid or str(uuid.uuid4()))
     for key in roots:
         identifier(key)
-    return {"schema": SCHEMA, "uuid": registry_uuid,
-            "roots": {key: review_directory(path) for key, path in roots.items()},
-            "locks": review_directory(locks)}
+    value = {"schema": SCHEMA, "uuid": registry_uuid,
+             "roots": {key: review_directory(path) for key, path in roots.items()},
+             "locks": review_directory(locks)}
+    if archive_roots:
+        value["archive_roots"] = {alias: review_directory(path) for alias, path in archive_roots.items()}
+    StorageBindings(value, Path.cwd() / 'storage.json')
+    return value
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', nargs=2, action='append', required=True, metavar=('UUID', 'PATH'))
     parser.add_argument('--locks', required=True, help='Shared publication-lock directory')
+    parser.add_argument('--archive-root', nargs=2, action='append', default=[], metavar=('OLD_DIRECTORY', 'DIRECTORY'),
+                        help='Bind an archive directory used by current or retained profiles to persistent storage')
     parser.add_argument('--uuid', help='Existing registry UUID when explicitly reviewing a replacement binding')
     parser.add_argument('--output', required=True, help='New private registry file; never overwrites an existing file')
     args = parser.parse_args(argv)
     try:
         if len(dict(args.root)) != len(args.root):
             raise InvalidData('A root UUID may only be bound once')
-        value = review(dict(args.root), args.locks, registry_uuid=args.uuid)
+        if len(dict(args.archive_root)) != len(args.archive_root):
+            raise InvalidData('An archive alias may only be bound once')
+        value = review(dict(args.root), args.locks, registry_uuid=args.uuid, archive_roots=dict(args.archive_root))
         from .config_migration import publish_profile
         publish_profile(args.output, value)
         print(f'Storage registry {value["uuid"]} written to {os.path.abspath(args.output)}')

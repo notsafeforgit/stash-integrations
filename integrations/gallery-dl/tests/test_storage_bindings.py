@@ -99,6 +99,78 @@ class StorageBindingTests(unittest.TestCase):
                 self.assertEqual(ProfileDispatcher(box, object(), self.filename).once(), {'state': 'yielded'})
                 self.assertEqual(dispatcher.call_args.args[2].root.path, moved)
 
+    def test_current_and_retained_archives_use_reviewed_storage_without_rewriting_policy(self):
+        import sqlite3
+        from gallery_dl import archive, config
+        old_root = self.directory / 'temporary-archives'
+        persistent = self.directory / 'persistent-archives'
+        persistent.mkdir()
+        value = json.loads(self.filename.read_text())
+        value['bindings']['archive']['path'] = str(old_root)
+        value['gallery']['extractor']['archive'] = ['${stash:archive}', '{category}.sqlite3']
+        self.filename.write_text(json.dumps(value))
+        previous = Configuration(self.filename)
+        with closing(self.open()) as box:
+            saved = Configurations(box)
+            saved.remember(previous)
+            row = saved.rows(self.filename)[0]
+            original = tuple(row)
+            self.value['archive_roots'] = {str(old_root): review_directory(persistent)}
+            self.write_storage()
+            current = self.activate()
+            restored = saved.load(row, storage=current.storage)
+            with sqlite3.connect(persistent / 'reddit.sqlite3') as db:
+                db.execute('CREATE TABLE archive(entry PRIMARY KEY) WITHOUT ROWID')
+                db.execute("INSERT INTO archive VALUES('redditknown')")
+            for profile in (current, restored):
+                self.assertEqual(profile.policy_sha256, previous.policy_sha256)
+                with profile.activate():
+                    configured = config.get(('extractor',), 'archive')
+                    self.assertEqual(configured, [str(persistent), '{category}.sqlite3'])
+                    cached = archive.connect(str(Path(configured[0]) / 'reddit.sqlite3'), 'reddit', '{id}')
+                    self.assertTrue(cached.check({'id': 'known'}))
+                    cached.close()
+            self.assertFalse(old_root.exists(), 'a resumed job must not recreate a temporary archive')
+            self.assertEqual(tuple(saved.rows(self.filename)[0]), original)
+            self.assertEqual(restored.document, previous.document)
+            self.assertIn(persistent / NAME, [path for path, _ in current.storage.verification_files(ROOT)])
+            with patch('stash_ingest.profile_dispatch.Dispatcher') as dispatcher:
+                dispatcher.return_value.once.return_value = {'state': 'yielded'}
+                ProfileDispatcher(box, object(), self.filename).once()
+                self.assertEqual(dispatcher.call_args.args[2]._gallery['extractor']['archive'][0], str(persistent))
+
+    def test_archive_relocation_is_confined_to_archive_settings_and_checks_mount_identity(self):
+        persistent = self.directory / 'persistent-archives'
+        persistent.mkdir()
+        original = self.directory / 'old-archives'
+        self.value['archive_roots'] = {str(original): review_directory(persistent)}
+        self.write_storage()
+        value = json.loads(self.filename.read_text())
+        value['bindings']['archive']['path'] = str(original / 'reddit.sqlite3')
+        value['gallery']['extractor']['logfile'] = '${stash:archive}'
+        self.filename.write_text(json.dumps(value))
+        current = self.activate()
+        self.assertEqual(current._gallery['extractor']['archive'], str(persistent / 'reddit.sqlite3'))
+        self.assertEqual(current._gallery['extractor']['logfile'], str(original / 'reddit.sqlite3'))
+        self.assertIsNone(current.storage.archive_path(None))
+        self.assertEqual(current.storage.archive_path('postgresql://example/db'), 'postgresql://example/db')
+        self.assertEqual(current.storage.archive_path(str(original) + '-other/a.db'), str(original) + '-other/a.db')
+        with self.assertRaises(InvalidData):
+            current.storage.archive_path(str(original) + '/../outside.db')
+        persistent.rename(self.directory / 'detached-archives')
+        persistent.mkdir()
+        with self.assertRaises(InvalidData):
+            current.check()
+        with self.assertRaises(InvalidData):
+            Configuration(self.filename)
+
+    def test_archive_aliases_reject_ambiguous_or_unbounded_roots(self):
+        target = review_directory(self.directory / 'locks')
+        for aliases in ({'/': target}, {'relative': target}, {'/tmp/../archives': target},
+                        {'/old': target, '/old/nested': target}, []):
+            with self.subTest(aliases=aliases), self.assertRaises(InvalidData):
+                StorageBindings({**self.value, 'archive_roots': aliases}, self.registry)
+
     def test_missing_or_wrong_registry_never_falls_back_to_retained_directory(self):
         with closing(self.open()) as box:
             Configurations(box).remember(Configuration(self.filename))
