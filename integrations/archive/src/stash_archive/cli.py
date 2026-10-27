@@ -83,6 +83,8 @@ def main(argv=None):
     export.add_argument("--server-timeout", type=float, default=3600)
     export.add_argument("--output", required=True)
     export.add_argument("--blobs", action="append", default=[])
+    export.add_argument("--artwork-policy", choices=("all", "originals-and-untracked-v1"), default="all",
+                        help="Omit generated scene covers with valid saved frame selections; retain all originals")
     export.add_argument("--components", help="JSON array of explicit role/name/path objects")
     export.add_argument("--producer-origin", help="Require matching native ingestion, source and job receipts before packing snapshots")
     restore = commands.add_parser("import")
@@ -124,7 +126,7 @@ def main(argv=None):
                 raise InvalidArchive("Server checkpoint options require --server")
             export_archive(args.database, args.output, blob_paths=args.blobs,
                            components=components, reserve=args.reserve_bytes, producer_origin=args.producer_origin,
-                           server_checkpoint=checkpoint)
+                           server_checkpoint=checkpoint, artwork_policy=args.artwork_policy)
             result = summary(args.output)
         elif args.command == "import":
             manifest = import_archive(args.archive, args.output, reserve=args.reserve_bytes)

@@ -104,3 +104,23 @@ explicitly says `receipts_audited: false`. It never claims that historical event
 acknowledgements, admissions or jobs have been reconciled. Independent database
 and restore audits still perform that complete reconciliation. Uncoordinated
 exports retain full receipt checks even with `verification="capture"`.
+
+## Generated scene artwork
+
+`export --artwork-policy originals-and-untracked-v1` writes archive version 2.
+It omits external generated scene covers only when the saved frame selection and
+source identity still match. Original performer/studio/tag/group artwork,
+uploaded or scraped scene covers, shared originals and uncertain covers remain
+required. SQLite bytes and frame selections remain intact. The default portable
+export still includes all artwork; the host publisher selects the new policy.
+
+Import recomputes omissions from SQLite and writes `generated-covers.jsonl` and
+`regenerate-covers.graphql`. After restoring media with its saved timestamps and
+starting a compatible Stash server, submit that mutation to regenerate missing
+covers. It preserves present and untracked artwork and refuses changed sources.
+The restore receipt explicitly records pending renditions. Older archives remain
+readable; older readers reject version 2.
+
+The host exporter can retain unfinished packing and authenticate reusable library
+chunks against the original sealed checkpoint. Reuse never changes the captured
+database, configuration, producer state or successful verification evidence.
