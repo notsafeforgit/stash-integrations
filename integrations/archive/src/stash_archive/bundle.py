@@ -136,7 +136,12 @@ def _blob_rows(connection):
 
 def export_archive(database, destination, *, blob_paths=(), components=(), reserve=RESERVE_BYTES,
                    progress=None, producer_origin=None, server_checkpoint=None, artwork_pins=None, media_snapshot=None,
-                   component_stage=None, verification="deep", server_cache=None):
+                   component_stage=None, verification="deep", server_cache=None,
+                   artwork_policy="all", reuse_archive=None, retain_incomplete=False):
+    from .artwork import policy, selection, descriptor
+    from .repack import PackedReuse
+    policy(artwork_policy)
+    reuse = PackedReuse(reuse_archive)
     verification_mode(verification)
     # Capture every download archive before any outbox, then the server last.
     # The native adapter durably queues file completion before archive.add; an
@@ -199,7 +204,9 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
             # The manifest declares a maximum; existing readers accept both.
             if sqlite_metadata is not None:
                 options["chunk_size"] = SQLITE_CHUNK_SIZE
-            entry = store_file(destination, path, reserve=reserve, **options)
+            entry = reuse.reuse(destination, role, name, server_expected.get((role, name)), sqlite_metadata)
+            if entry is None:
+                entry = store_file(destination, path, reserve=reserve, **options)
             if (role, name) in server_expected and (entry["sha256"], entry["size"]) != server_expected[(role, name)]:
                 raise InvalidArchive("Packed checkpoint component differs from its captured digest")
             entry.update(role=role, name=name)
@@ -265,7 +272,10 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
             add(native, "library", "library", metadata)
             pinned = artwork_pins.open_bound(server_checkpoint.boundary_receipt).verify() if artwork_pins is not None else None
             with closing(connect_readonly(native)) as connection:
+                omitted = selection(connection) if artwork_policy != "all" else {}
                 for checksum in _blob_rows(connection):
+                    if checksum in omitted:
+                        continue
                     found = pinned.resolve(checksum) if pinned is not None else None
                     for root in blob_paths:
                         candidate = Path(root) / checksum[:2] / checksum[2:4] / checksum
@@ -293,6 +303,8 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
                     "coverage": "declared-components", "chunk_size": CHUNK_SIZE,
                     "inventory": {"sha256": inventory_digest.hexdigest(), "size": inventory_bytes,
                                   "count": count, "total_bytes": total}}
+        if artwork_policy != "all":
+            manifest.update(version=2, artwork=descriptor(omitted))
         body = json_bytes(manifest)
         if len(body) > MAX_MANIFEST:
             raise InvalidArchive("Archive manifest exceeds the supported size")
@@ -322,16 +334,23 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
     except BaseException:
         # Only a directory created by this call is removed. Existing outputs are
         # refused above, and interruptions cannot publish a success manifest.
-        shutil.rmtree(destination)
+        if not retain_incomplete:
+            shutil.rmtree(destination)
         raise
 
 
 def validate_manifest(manifest):
-    if not isinstance(manifest, dict) or set(manifest) != {
-            "format", "version", "uuid", "created_at", "coverage", "chunk_size", "inventory"}:
+    if not isinstance(manifest, dict):
+        raise InvalidArchive("Invalid archive manifest fields")
+    fields = {"format", "version", "uuid", "created_at", "coverage", "chunk_size", "inventory"}
+    if manifest.get("version") == 2:
+        from .artwork import validate_descriptor
+        fields.add("artwork")
+        validate_descriptor(manifest.get("artwork"))
+    if set(manifest) != fields:
         raise InvalidArchive("Invalid archive manifest fields")
     if (manifest["format"] != FORMAT or type(manifest["version"]) is not int
-            or manifest["version"] != VERSION or type(manifest["chunk_size"]) is not int
+            or manifest["version"] not in (1, 2) or type(manifest["chunk_size"]) is not int
             or manifest["chunk_size"] not in (LEGACY_CHUNK_SIZE, CHUNK_SIZE)
             or manifest["coverage"] != "declared-components"):
         raise InvalidArchive("Unsupported archive format, version or coverage")
@@ -437,9 +456,9 @@ def import_archive(source, destination, *, reserve=RESERVE_BYTES, progress=None)
                 progress({"stage": "import", "artifacts": index,
                           "total": manifest["inventory"]["count"]})
         with closing(connect_readonly(destination / "library.sqlite")) as connection:
-            required = set(_blob_rows(connection))
-        if required != blobs:
-            raise InvalidArchive("Original artwork inventory does not match the library snapshot")
+            from .artwork import verify_inventory, restore_instructions
+            omitted = verify_inventory(connection, manifest, blobs)
+        restore_instructions(destination, omitted)
         if progress is not None:
             progress({"stage": "verify_artwork", "artifacts": 0, "total": len(blobs)})
         # Match the export/restore path order instead of seeking between random
@@ -457,6 +476,8 @@ def import_archive(source, destination, *, reserve=RESERVE_BYTES, progress=None)
         receipt = {"format": FORMAT + ".restore", "version": VERSION,
                    "archive_uuid": manifest["uuid"],
                    "manifest_sha256": hashlib.sha256(json_bytes(manifest)).hexdigest()}
+        if manifest["version"] == 2:
+            receipt.update(artwork=manifest["artwork"], artwork_regeneration_pending=manifest["artwork"]["omitted_scenes"])
         # Sync every newly created ancestor as well as each leaf directory;
         # syncing only the leaf does not persist its entry in a new parent.
         for directory, _, _ in os.walk(destination, topdown=False):
@@ -483,4 +504,4 @@ def summary(source):
             "coverage": manifest["coverage"], "artifacts": manifest["inventory"]["count"],
             "uncompressed_bytes": manifest["inventory"]["total_bytes"],
             "unique_objects": len(objects), "compressed_bytes": sum(objects.values()),
-            "contents_verified": False}
+            "artwork": manifest.get("artwork", {"policy": "all"}), "contents_verified": False}

@@ -250,9 +250,8 @@ def _stream_archive(source, destination, reserve):
         else:
             write_artifact(source, entry)
     with closing(connect_readonly(destination / "library.sqlite")) as connection:
-        required = set(_blob_rows(connection))
-    if required != blobs:
-        raise InvalidArchive("Original artwork inventory does not match the library snapshot")
+        from .artwork import verify_inventory
+        verify_inventory(connection, manifest, blobs)
     return manifest
 
 
