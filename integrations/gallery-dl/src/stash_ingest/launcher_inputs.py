@@ -84,6 +84,26 @@ def instagram_list(filename):
     return _explicit_list(filename, instagram_target, 'Instagram')
 
 
+def redgifs_target(value):
+    value = value.strip()
+    if re.fullmatch(r'@?[A-Za-z0-9_-]{1,256}', value):
+        value = 'https://www.redgifs.com/users/' + value.removeprefix('@')
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in ('http', 'https') or parsed.hostname not in ('redgifs.com', 'www.redgifs.com')
+                or parsed.username is not None or parsed.password is not None or parsed.port is not None
+                or parsed.query or parsed.fragment
+                or not re.fullmatch(r'/users/[A-Za-z0-9_-]{1,256}/?', parsed.path)):
+            raise ValueError()
+        return 'https://www.redgifs.com' + parsed.path.rstrip('/').lower()
+    except ValueError:
+        raise InvalidData('Choose a Redgifs account name or profile URL') from None
+
+
+def redgifs_list(filename):
+    return _explicit_list(filename, redgifs_target, 'Redgifs')
+
+
 def mirror_target(value, category):
     value = value.strip()
     try:

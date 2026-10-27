@@ -41,7 +41,8 @@ class WorkerTests(unittest.TestCase):
                                                      "source_run_origins_protocol": 1,
                                                      "source_run_instagram_pagination_protocol": 1,
                                                      "attachment_download_protocol": 1, "max_attachment_download_bytes": 16384, "file_transformation_protocol": 1,
-                                                     "kinds": ["source.capture", "file.completed", "attachment.download"]})
+                                                     "account_profile_protocol": 1, "max_account_profile_bytes": 131072,
+                                                     "kinds": ["source.capture", "file.completed", "attachment.download", "account.profile"]})
         self.lease = LeaseFixture()
         self.lease.client = self.client
         self.lease.run.update(policy_sha256=self.profile.policy_sha256, path_prefix="Account", fence=3)

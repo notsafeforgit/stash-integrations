@@ -25,6 +25,16 @@
         "pkg/archive/testdata/reddit-external-media-v1.json"
       ],
       "reason": "Shared Reddit-linked Imgur ordered album membership and direct GIFV rendition contract fixtures."
+    },
+    {
+      "paths": [
+        "pkg/sqlite/migrations/1000134_account_profiles.up.sql"
+      ],
+      "sha256": {
+        "pkg/sqlite/migrations/1000134_account_profiles.up.sql": "c3eea80a72fcd868f6eed69634b7826ca6bd280c5742a0a23447a9454c7be1cc"
+      },
+      "reason": "Standalone account profile schema fixture from the coordinated core release; exact contents retained for producer receipt verification.",
+      "revision": "8aa14e063c1e4139f905e9f3d96bb937821a053f"
     }
   ]
 }

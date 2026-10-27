@@ -17,7 +17,7 @@ from .encoding import InvalidData, MAX_BATCH_BYTES, decode, digest, encode, iden
 from .endpoint import origin
 
 APPLICATION_ID = 0x5354494F  # STIO, not a Stash or gallery-dl archive database.
-SCHEMA = 21
+SCHEMA = 22
 
 
 def is_contention(error):
@@ -212,6 +212,8 @@ class Outbox:
             migrate(self.db)
         if version < 21:
             self.db.execute("CREATE INDEX request_run_tickets ON run_ticket_requests(request_uuid,ticket_uuid)")
+        # Version 22 admits account.profile events. Older drainers must refuse
+        # this queue rather than strand profile observations silently.
         self.db.execute(f"PRAGMA user_version={SCHEMA}")
 
     def _migrate_dispatch(self):
@@ -322,8 +324,8 @@ class Outbox:
         if (type(seconds) is not int or not 5 <= seconds <= 900
                 or type(limit) is not int or not 1 <= limit <= 8 or max_bytes < 1024):
             raise InvalidData("Invalid delivery lease or batch limit")
-        kinds = tuple(kinds if kinds is not None else ("source.capture", "file.completed", "attachment.download"))
-        if not kinds or not set(kinds) <= {"source.capture", "file.completed", "attachment.download"}:
+        kinds = tuple(kinds if kinds is not None else ("source.capture", "file.completed", "attachment.download", "account.profile"))
+        if not kinds or not set(kinds) <= {"source.capture", "file.completed", "attachment.download", "account.profile"}:
             raise InvalidData("Invalid delivery kinds")
         max_bytes = min(max_bytes, MAX_BATCH_BYTES)
         result, size = [], 32
@@ -373,6 +375,14 @@ class Outbox:
                 identifier(receipt.get("post_uuid"))
             elif row["kind"] == "file.completed":
                 identifier(receipt.get("job_uuid"))
+            elif row['kind'] == 'account.profile':
+                identifier(receipt['result'].get('profile_uuid'))
+                if receipt['result'].get('account_uuid'):
+                    identifier(receipt['result']['account_uuid'])
+                if (receipt.get('capture_uuid') or receipt.get('post_uuid') or receipt.get('job_uuid')
+                        or receipt['result'].get('status') != 'recorded'
+                        or receipt['result'].get('media_ingested') is not False):
+                    raise Conflict('Server receipt does not acknowledge this profile observation')
             else:
                 event = events.validate(row["body"])
                 identifier(receipt.get("capture_uuid"))

@@ -12,7 +12,7 @@ EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 PROTECTED_KEYWORDS = frozenset(("category", "subcategory", "date", "created_utc", "created_at",
                                 "id", "tweet_id", "rest_id", "id_str", "legacy", "_reddit",
                                 "post_id", "post_date", "sidecar_media_id", "media_id", "instagram_media",
-                                "published", "service", "mirror_media"))
+                                "published", "service", "mirror_media", "native_redgifs_directory"))
 
 
 def _datetime(value):
@@ -30,11 +30,14 @@ def _datetime(value):
 def published(metadata, category):
     """Date of the source post, including its wrapper when it is a repost."""
     data, category = _context({**metadata, "category": category})
-    if category not in ("reddit", "twitter", "instagram", "coomer", "kemono", "bluesky", "tiktok", 'ytdl', 'ytdl-generic', *web_media.CATEGORIES):
+    if category not in ("reddit", "redgifs", "twitter", "instagram", "coomer", "kemono", "bluesky", "tiktok", 'ytdl', 'ytdl-generic', *web_media.CATEGORIES):
         raise UnsupportedSource("This extractor needs a native source-date adapter")
     if category == 'erome':
         raise InvalidData('Erome supports traversal only; its media URL date is not a publication timestamp')
     try:
+        if category == 'redgifs':
+            from .redgifs import publication
+            return _datetime(publication(data))
         if category in web_media.CATEGORIES:
             web_media.post(data, category)
             return _datetime(data.get('date'))
@@ -126,8 +129,12 @@ class SourceWindow:
 
 def validate_keywords(extractor):
     protected = PROTECTED_KEYWORDS
-    if extractor.category in ('coomer', 'kemono'):
+    if extractor.category == 'reddit':
+        protected = protected | {'user', 'author', 'author_fullname'}
+    elif extractor.category in ('coomer', 'kemono'):
         protected = protected | {'user', 'path', 'file', 'attachments', 'content', 'native_file_exclusion'}
+    elif extractor.category == 'redgifs':
+        protected = protected | {'userName', 'createDate', 'urls', 'gallery'}
     elif extractor.category == 'bluesky':
         protected = protected | {'author', 'uri', 'embed', 'createdAt', 'filename', 'bluesky_media'}
     elif extractor.category == 'tiktok':

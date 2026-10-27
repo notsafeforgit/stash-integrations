@@ -15,7 +15,7 @@ from gallery_dl import config, exception, job, text, version
 from gallery_dl import path as gallery_path
 from gallery_dl.extractor.common import Message
 
-from . import deleted_media, missing_media, reddit_imgur, filename, instagram, mirror, recent, social_media, web_media
+from . import deleted_media, missing_media, reddit_imgur, redgifs, filename, instagram, mirror, recent, social_media, web_media, source
 from .encoding import InvalidData
 from .filesystem import destination_lock
 from .runs import SourceFailure, SourcePaused, SourceTurnComplete
@@ -329,6 +329,11 @@ class NativeDownloadJob(job.DownloadJob):
             web_media.install(self.extractor, self.producer, self._native_scope)
         elif self.extractor.category == "imgur":
             reddit_imgur.install(self.extractor)
+        elif self.extractor.category == "redgifs":
+            redgifs.install(self.extractor, self.producer, standalone=self._native_parent is None)
+        elif self.extractor.category == "reddit" and self._native_parent is None:
+            from . import reddit_profile
+            reddit_profile.install(self.extractor, self.producer)
         elif self.extractor.category == "twitter":
             twitter_evidence(self.extractor)
         elif self.extractor.category == "instagram":
@@ -637,6 +642,12 @@ class NativeDownloadJob(job.DownloadJob):
         pathfmt.kwdict.pop("_meta_path", None)
         filename.install(self).begin(pathfmt.kwdict)
         kept = dict(pathfmt.kwdict, _url=self._native_url, source_extractor_url=source_url(self.extractor))
+        # Preserve the actual Reddit destination for a separately scheduled
+        # Redgifs profile. This also runs for archive skips, before any download.
+        # Never take a directory hint from website data or user keywords.
+        kept.pop('native_redgifs_directory', None)
+        if self.extractor.category == 'redgifs' and source._context(kept)[1] == 'reddit':
+            kept['native_redgifs_directory'] = self.producer.relative(pathfmt.realdirectory)
         self._native_prepared = self.producer.prepare(kept)
         self.producer.routine_post_items += 1
         ref = self._native_prepared.attachment

@@ -43,7 +43,7 @@ class PolicyIdentityTests(unittest.TestCase):
                     saved.remember(after)
                     self.assertEqual(box.db.execute("SELECT count(*) FROM worker_configurations").fetchone()[0], 1)
                     provenance = current
-                self.assertEqual(box.db.execute("PRAGMA user_version").fetchone()[0], 21)
+                self.assertEqual(box.db.execute("PRAGMA user_version").fetchone()[0], 22)
 
     def test_changed_contract_and_legacy_fingerprints_require_explicit_upgrade(self):
         with tempfile.TemporaryDirectory() as temporary:

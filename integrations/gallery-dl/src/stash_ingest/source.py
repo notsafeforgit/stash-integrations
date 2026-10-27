@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlsplit
 
 from .encoding import InvalidData
-from . import instagram, mirror, social_media, ytdl_media, web_media, reddit_external, reddit_embeds
+from . import instagram, mirror, social_media, ytdl_media, web_media, reddit_external, reddit_embeds, redgifs
 
 
 class UnsupportedSource(InvalidData):
@@ -77,6 +77,8 @@ def _bluesky(data):
 
 def post(source):
     data, category = _context(source)
+    if category == 'redgifs':
+        return redgifs.post(data)
     if category in web_media.CATEGORIES:
         return web_media.post(data, category)
     if category in ('ytdl', 'ytdl-generic'):
@@ -120,6 +122,8 @@ def metadata(source):
     if category == "erome":
         # The extractor derives date from a media URL version, not publication.
         date_keys = ()
+    elif category == 'redgifs':
+        text_keys, date_keys = ('description',), ()
     elif category == "bluesky":
         text_keys, date_keys = ("text",), ("createdAt", "date")
     elif category == "tiktok":
@@ -148,6 +152,10 @@ def metadata(source):
         date = ytdl_media.publication(data)
         if date is not None:
             result['published_at'] = date
+    elif category == 'redgifs':
+        date = redgifs.publication(data)
+        if date is not None:
+            result['published_at'] = date.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
     if category in web_media.CATEGORIES and result.get("published_at", "").startswith("0001-"):
         result.pop("published_at")
     if result.get("published_at"):
@@ -201,6 +209,8 @@ def attachment(source):
     ref = post(source)
     data, category = _context(source)
     download_url = source.get("_url")
+    if category == 'redgifs':
+        return redgifs.attachment(data, download_url)
     if category in web_media.CATEGORIES:
         return web_media.attachment(data, category)
     if category in ('ytdl', 'ytdl-generic'):

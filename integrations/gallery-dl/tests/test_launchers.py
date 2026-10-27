@@ -15,7 +15,7 @@ from gallery_dl import config
 from stash_ingest.configuration import Configuration
 from stash_ingest.encoding import InvalidData
 from stash_ingest.launcher_inputs import date_min, instagram_list, instagram_target, mirror_list, mirror_target, reddit_list, reddit_name, reddit_urls, social_list, social_target, twitter_list, twitter_target
-from stash_ingest.launchers import bluesky_main, caller_uuid, coomer_main, instagram_main, kemono_main, reddit_main, tiktok_main, twitter_main
+from stash_ingest.launchers import bluesky_main, caller_uuid, coomer_main, instagram_main, kemono_main, reddit_main, redgifs_main, tiktok_main, twitter_main
 from stash_ingest.outbox import Outbox
 from stash_ingest.source_calls import SourceCalls
 from helpers import PRODUCER
@@ -91,6 +91,30 @@ class LauncherTests(unittest.TestCase):
         source.write_text(urls[0] + '\nhttps://x.com/example\n')
         with self.assertRaisesRegex(InvalidData, 'line 2'):
             instagram_list(source)
+
+    def test_redgifs_profiles_preserve_requests_and_use_full_history(self):
+        from stash_ingest.launcher_inputs import redgifs_list, redgifs_target
+        url = 'https://www.redgifs.com/users/example'
+        self.assertEqual(redgifs_target('https://redgifs.com/users/Example/'), url)
+        self.assertEqual(redgifs_target('@Example'), url)
+        for invalid in ('https://redgifs.com/watch/example', 'https://redgifs.com/users/example/collections',
+                        'https://private@redgifs.com/users/example', 'https://other.test/users/example',
+                        'https://redgifs.com/users/example?order=top', '../example'):
+            with self.subTest(invalid=invalid), self.assertRaises(InvalidData):
+                redgifs_target(invalid)
+        targets = self.directory / 'redgifs.conf'
+        targets.write_text('# selected profiles\nExample\n' + url + '\n')
+        self.assertEqual(redgifs_list(targets), ([url], []))
+        self.value['source_category'] = 'redgifs'
+        self.value['gallery']['skip'] = True
+        self.profile.write_text(json.dumps(self.value))
+        args = [*self.base, '--config-file', str(targets), '--profile', str(self.profile), '--full-history']
+        status, first, error = self.invoke(redgifs_main, args)
+        self.assertEqual((status, error, first['state']), (0, '', 'recorded'))
+        self.assertIsNone(first['call']['definition']['window']['since'])
+        targets.unlink()
+        self.profile.unlink()
+        self.assertEqual(self.invoke(redgifs_main, args), (0, first, ''))
 
     def test_instagram_dry_run_and_durable_request_replay_do_not_claim_source_completion(self):
         source = self.directory / 'instagram.conf'

@@ -147,6 +147,15 @@ class Producer:
     def prepare(self, metadata):
         return self._prepare(metadata)
 
+    def observe_profile(self, metadata):
+        self.check()
+        event = {**self.context, 'event_uuid': str(uuid.uuid4()), 'kind': 'account.profile',
+                 'owner_uuid': self.owner_uuid, 'fence': self.fence, 'observed_at': utc_now(),
+                 'extractor_version': self.extractor_version, 'retention_policy': POLICY,
+                 'source': retain(metadata)}
+        # This event deliberately does not advance the media cursor or counters.
+        return self.outbox.enqueue(encode(event, 128 << 10))
+
     def skipped(self, metadata, attachment, status):
         if attachment is None:
             # A missing album has no observed member identity. Keep the post

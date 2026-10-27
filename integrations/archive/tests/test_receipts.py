@@ -25,6 +25,7 @@ ORIGIN = "https://stash.example"
 
 
 class ReceiptFixture(unittest.TestCase):
+    receipt_migration = '1000087_attachment_downloads.up.sql'
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -55,7 +56,12 @@ class ReceiptFixture(unittest.TestCase):
         self.db.execute("INSERT INTO source_collection_revisions VALUES(?,1)", (COLLECTION,))
         self.db.execute("INSERT INTO ingest_credential_scopes VALUES(?,?)", (CREDENTIAL,COLLECTION))
         migration = (ROOT / 'pkg/sqlite/migrations/1000087_attachment_downloads.up.sql').read_text()
-        receipt_table = migration.split('CREATE TABLE ingest_receipts_next (', 1)[1].split('\n);', 1)[0]
+        receipt_migration = getattr(self, 'receipt_migration', '1000087_attachment_downloads.up.sql')
+        if receipt_migration == '1000087_attachment_downloads.up.sql':
+            receipt_table = migration.split('CREATE TABLE ingest_receipts_next (', 1)[1].split('\n);', 1)[0]
+        else:
+            current = (ROOT / 'pkg/sqlite/migrations' / receipt_migration).read_text()
+            receipt_table = current.split('CREATE TABLE ingest_receipts (', 1)[1].split('\n);', 1)[0]
         # Use the actual receipt DDL; the supporting domain rows provide its
         # foreign-key targets. Normal native model behavior is tested in Go.
         self.db.executescript('CREATE TABLE ingest_receipts (' + receipt_table + '\n);')
@@ -200,7 +206,7 @@ class ReceiptBoundaryTests(ReceiptFixture):
         with self.assertRaisesRegex(InvalidArchive, "identity is missing"): self.verify()
 
     def test_future_outbox_version_and_writable_transaction_refused(self):
-        self.box.db.execute("PRAGMA user_version=22")
+        self.box.db.execute("PRAGMA user_version=23")
         with self.assertRaisesRegex(InvalidArchive, "Unsupported producer"): self.verify()
         self.db.execute("BEGIN")
         try:

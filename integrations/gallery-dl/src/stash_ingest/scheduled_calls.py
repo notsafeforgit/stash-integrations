@@ -9,7 +9,7 @@ from .outbox import Capacity, Conflict, LeaseLost
 from .source_calls import SourceCalls, definition
 from .subscriptions import subscribed_targets
 
-SERVICES = ('reddit', 'twitter', 'instagram', 'coomer', 'kemono', 'bluesky', 'tiktok')
+SERVICES = ('reddit', 'redgifs', 'twitter', 'instagram', 'coomer', 'kemono', 'bluesky', 'tiktok')
 
 
 def migrate(db):

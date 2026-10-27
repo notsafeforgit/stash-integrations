@@ -17,6 +17,7 @@ COMMON = frozenset({"protocol", "producer_uuid", "event_uuid", "run_uuid",
                     "collection_uuid", "collection_revision", "root_uuid",
                     "kind", "observed_at"})
 CAPTURE = frozenset({"extractor_version", "retention_policy", "post", "metadata", "source"})
+PROFILE = frozenset({'extractor_version', 'retention_policy', 'owner_uuid', 'fence', 'source'})
 FILE = frozenset({"relative_path", "size", "sha256", "media_kind"})
 DOWNLOAD = frozenset({"owner_uuid", "fence", "transfer_sequence", "capture_event_uuid", "attachment", "state"})
 METADATA = frozenset({"title", "original_text", "published_at", "date_basis", "language"})
@@ -53,7 +54,28 @@ def validate(body):
         raise InvalidData("Expected an observed timestamp with timezone") from None
 
     kind = event["kind"]
-    if kind == "source.capture":
+    if kind == 'account.profile':
+        if set(event) != COMMON | PROFILE or len(body) > 128 << 10:
+            raise InvalidData('Invalid account profile envelope')
+        identifier(event['owner_uuid'])
+        if type(event['fence']) is not int or not 1 <= event['fence'] <= 2**53 - 1:
+            raise InvalidData('Profile observation requires its source attempt')
+        version = event['extractor_version']
+        if (not isinstance(version, str) or not 1 <= len(version.encode('utf-8')) <= 128
+                or any(c in version for c in '\r\n\x00') or event['retention_policy'] != POLICY):
+            raise InvalidData('Invalid profile capture policy')
+        profile = event['source']
+        if (not isinstance(profile, dict) or set(profile) != {'category', 'user'}
+                or profile['category'] != 'reddit' or not isinstance(profile['user'], dict)
+                or encode(retain(profile)) != encode(profile)):
+            raise InvalidData('Invalid retained account profile')
+        # Keep envelope validation independent of the gallery-dl runtime.
+        user = profile['user']
+        if (not isinstance(user.get('id'), str) or not re.fullmatch(r'(?:t2_)?[a-z0-9]+', user['id'])
+                or not isinstance(user.get('name'), str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', user['name'])):
+            raise InvalidData('Account profile requires its own stable ID and handle')
+        encode(profile, 65536)
+    elif kind == "source.capture":
         if set(event) != COMMON | CAPTURE:
             raise InvalidData("Unsupported source envelope fields")
         version = event["extractor_version"]

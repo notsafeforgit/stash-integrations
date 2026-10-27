@@ -247,6 +247,21 @@ Extractor keywords cannot replace the source identity or publication date.
 
 Before downloading, the adapter queues a retained source capture and derives the
 attachment from source evidence. Reddit galleries use their media IDs; ordinary
+Standalone Redgifs profiles and watch URLs can use `stash-gallery download` with
+the ordinary manual gallery-dl profile. Deploy the Stash reader advertising
+`native:redgifs` before enabling this producer support. Each API item retains its
+case-normalized watch ID and the same attachment ID used by Reddit embeds, so
+existing archive entries still skip downloads. The original `createDate` owns
+publication windows; a gallery member cannot inherit another member's date.
+Only captured HD, SD or GIF renditions are accepted, never posters. Gallery
+labels and downloader counts do not establish a complete ordered album.
+
+The actual API `userName` stays attached to each item instead of being replaced
+by the requested feed owner's name. It is handle evidence, not an immutable
+account ID or proof that a Reddit publisher owns the Redgifs account. Associate
+the profile with a performer explicitly; standalone fetching does not silently
+expand every Reddit subscription or change existing run windows and cursors.
+
 Reddit images and videos use direct service URLs. Linked Redgifs clips, including
 legacy `v3.redgifs.com/ifr/` links, use the
 captured watch/iframe ID; direct external files use their full source URL.
@@ -3638,3 +3653,62 @@ failures rather than successful service exits.
 Deploy v0.6.10 archive readers and all shared-outbox clients before schema-21 workers.
 The migration only adds an index; producer UUIDs, policies, windows, event bytes and
 receipts are unchanged. Earlier schema archives retain their verification rules.
+
+
+### Discovering Redgifs profiles from Reddit
+
+A resolved Redgifs child capture keeps its API uploader and the directory
+actually selected by the Reddit job in `native_redgifs_directory`. Stash accepts
+this destination only within the current collection's root and path prefix,
+registers one monitored Redgifs profile per root, and retains its discovery
+capture in the source definition history. Profile discovery applies to the
+Reddit author's own profile passes (including backlog), not subreddit or saved
+feeds, crossposts, or comments. A missing uploader or destination cannot create
+a download subscription. Existing source destinations and subscription decisions
+are preserved. Related profile URLs do not establish ownership of another
+publisher or assign depicted performers.
+
+`stash-ingest-redgifs --subscriptions --full-history --profile PROFILE` records
+archive-aware passes for all enabled `native:redgifs` subscriptions. It uses the
+same durable subscription scheduling, retry, scope and pause checks as other
+launchers. Hosts choose the cadence; new subscriptions are picked up at the
+next invocation. Direct `--username HANDLE_OR_PROFILE_URL` and explicit
+`--config-file` profile lists are also supported.
+
+For a dedicated Redgifs worker, use the existing archive and storage bindings,
+`source_category: redgifs`, and a full-history profile with global `skip: true`.
+Add `native-profile-directory: true` under `extractor.redgifs.user`. This native
+adapter option uses the claimed collection's non-root path prefix as the exact
+download directory; arbitrary website keywords cannot replace it. The default
+gallery-dl directory remains the fallback for whole-root manual sources. Put
+filename, fallback directory and postprocessors under that same `user` section,
+so Reddit child extractors retain their current inherited directory. Share the
+Redgifs archive with the Reddit worker to avoid downloading the same clip twice.
+
+### Reddit profile refresh
+
+Reddit profile and submitted-post runs now emit an independent `account.profile`
+event before iterating posts. This refreshes performer URLs even when a run has
+no posts, every post is outside its window, or every file is already archived.
+The API bio and the current Reddit page's Social Links are retained only when
+both identify the same stable Reddit account. Post/comment body links are not
+profile evidence. Captured profile fields use the same retention rules in Go
+and Python.
+
+The worker resolves `myredlink.com` (including its Continue/JavaScript landing
+page), `t.co`, `bit.ly` and `tinyurl.com` with a five-hop limit and a separate
+session without Reddit credentials. It records the published URL and resolved
+destination as evidence. It does not fetch destination profiles or recursively
+crawl unknown link hubs. Unavailable social pages or shorteners retain the bio
+or original link and warn; subsequent profile runs retry. Requests share the
+existing source budget and rate-limit handling.
+
+Deploy the Stash server with schema 1000134 and `account_profile_protocol: 1`
+before releasing this worker. The Reddit worker checks this capability before
+execution, and the outbox keeps profile deliveries pending on an older server.
+Outbox schema 22 preserves existing queued bytes and receipts; older binaries
+must not reopen it. Keep the outbox when upgrading. No media cursor, publication
+window, archive key, performer ownership or configured destination changes.
+Existing owner links, normalized URL deduplication, and explicit URL removals
+continue to govern which performer receives new links. No additional timer or
+configuration is needed for profile refresh during scheduled Reddit runs.

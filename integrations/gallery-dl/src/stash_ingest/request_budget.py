@@ -16,6 +16,8 @@ from .runs import SourcePaused, source_scope
 
 def operation(url):
     path = urlsplit(url).path.lower()
+    if urlsplit(url).hostname in {'sh.reddit.com', 'www.reddit.com'} and re.fullmatch(r'/user/[a-z0-9_-]+/', path):
+        return 'profile'
     if any(value in path for value in ('usermedia', 'usertweets', 'searchtimeline', '/submitted', '/search', '/timeline', '/.json')) and '/comments/' not in path:
         return 'listing'
     if any(value in path for value in ('userbyscreenname', 'userbyrestid', 'about.json', '/users/show')):

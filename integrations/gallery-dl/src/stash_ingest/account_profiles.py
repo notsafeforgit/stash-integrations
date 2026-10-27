@@ -7,7 +7,8 @@ TWITTER_FIELDS = frozenset({
     'location', 'based_in', 'url', 'date', 'created_at', 'profile_image',
     'profile_banner', 'profile_image_url', 'profile_image_url_https', 'profile_banner_url',
 })
-REDDIT_FIELDS = frozenset({'id', 'name', 'created', 'created_utc', 'icon_img', 'snoovatar_img'})
+REDDIT_FIELDS = frozenset({'id', 'name', 'created', 'created_utc', 'icon_img', 'snoovatar_img',
+                           'social_links', 'resolved_links'})
 REDDIT_PAGE_FIELDS = frozenset({
     'id', 'name', 'display_name', 'display_name_prefixed', 'title', 'url',
     'description', 'public_description', 'icon_img', 'banner_img', 'header_img', 'community_icon',

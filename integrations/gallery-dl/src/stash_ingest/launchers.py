@@ -21,6 +21,7 @@ from .source_calls import SourceCalls
 from .scheduled_calls import ScheduledCalls, advance_schedule
 from .subscriptions import NoSubscriptions, subscribed_targets
 from . import windows
+from .launcher_inputs import redgifs_list, redgifs_target
 
 URL_SERVICES = ('coomer', 'kemono', 'bluesky', 'tiktok')
 
@@ -66,6 +67,8 @@ def options(service, args):
     if service == "twitter":
         direct = twitter_target(args.username, "user") if args.username else twitter_target(args.user_id, "id") if args.user_id else None
         source = {"url": direct} if direct else {"list_file": str(Path(config_file).absolute())}
+    elif service == 'redgifs':
+        source = {'url': redgifs_target(args.username)} if args.username else {'list_file': str(Path(config_file).absolute())}
     elif service == "instagram":
         source = {"url": instagram_target(args.username)} if args.username else {"list_file": str(Path(config_file).absolute())}
     elif service in URL_SERVICES:
@@ -87,9 +90,11 @@ def options(service, args):
 
 def expand(service, value, now):
     source, ignored = value["source"], []
-    if service in ('twitter', 'instagram', *URL_SERVICES):
+    if service in ('twitter', 'instagram', 'redgifs', *URL_SERVICES):
         if "url" in source:
             urls = [source["url"]]
+        elif service == 'redgifs':
+            urls, ignored = redgifs_list(source['list_file'])
         elif service in ('coomer', 'kemono'):
             urls, ignored = mirror_list(source['list_file'], service)
         elif service in ('bluesky', 'tiktok'):
@@ -219,6 +224,10 @@ def reddit_main(argv=None):
 
 def instagram_main(argv=None):
     return main("instagram", argv)
+
+
+def redgifs_main(argv=None):
+    return main('redgifs', argv)
 
 
 def coomer_main(argv=None):

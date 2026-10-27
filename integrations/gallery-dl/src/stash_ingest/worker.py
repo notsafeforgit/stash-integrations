@@ -113,6 +113,10 @@ def execute(box, client, configuration, run_uuid):
             or "attachment.download" not in capabilities.get("kinds", [])
             or capabilities.get("file_ingestion") is not True):
         raise Unavailable("native_download_worker_unavailable")
+    if configuration.source_category == 'reddit' and (capabilities.get('account_profile_protocol') != 1
+            or 'account.profile' not in capabilities.get('kinds', [])
+            or capabilities.get('max_account_profile_bytes', 0) < 128 << 10):
+        raise InvalidData('Reddit profile observations require an updated Stash server')
     if configuration.source_mode == 'traversal' and capabilities.get('source_run_traversal_protocol') != 1:
         raise Unavailable('native_source_traversal_unavailable')
     current = client._request("GET", "/runs/" + run_uuid)

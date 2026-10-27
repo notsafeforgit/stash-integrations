@@ -145,6 +145,16 @@ def drain_once(outbox, client, *, owner=None):
 
     try:
         capabilities = client.capabilities()
+        if capabilities.get('account_profile_protocol') != 1:
+            ready = []
+            for delivery in deliveries:
+                if decode(delivery.body)['kind'] == 'account.profile':
+                    fail(delivery, 'account_profile_unavailable', delay=60)
+                else:
+                    ready.append(delivery)
+            deliveries = ready
+            if not deliveries:
+                return counts
         if capabilities.get("file_transformation_protocol") != 1:
             ready = []
             for delivery in deliveries:

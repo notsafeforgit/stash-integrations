@@ -7,7 +7,7 @@ import unittest
 import uuid
 
 from stash_ingest.client import Client, Unavailable
-from stash_ingest.launchers import reddit_main
+from stash_ingest.launchers import reddit_main, redgifs_main
 from stash_ingest.outbox import Capacity, Conflict, LeaseLost, Outbox
 from stash_ingest.scheduled_calls import ScheduledCalls, advance_schedule
 from stash_ingest.source_calls import SourceCalls
@@ -83,6 +83,27 @@ class SchedulingTests(unittest.TestCase):
         self.client.capabilities.side_effect = Unavailable('queue_full', 429, 3600)
         self.assertEqual(advance_schedule(self.calls, self.client)['available_at'], self.now + 3600)
 
+    def test_redgifs_subscription_schedule_recovers_with_original_scope(self):
+        self.value['source_category'] = 'redgifs'
+        self.value['gallery']['skip'] = True
+        self.profile.write_text(json.dumps(self.value))
+        collection = self.client._request.return_value['items'][0]['collection']
+        collection.update(namespace='native:redgifs', target_url='https://www.redgifs.com/users/uploader')
+        args = [*self.base, '--subscriptions', '--profile', str(self.profile), '--full-history']
+        self.client.capabilities.side_effect = Unavailable('network_unavailable')
+        with patch('stash_ingest.launchers.Client', return_value=self.client), patch('stash_ingest.launchers.Outbox', side_effect=lambda *a, **k: self.open()):
+            self.assertEqual(self.invoke(redgifs_main, args)[1]['state'], 'pending')
+        self.box.close()
+        self.box = self.open()
+        self.calls = ScheduledCalls(self.box)
+        self.now += 300
+        self.client.capabilities.side_effect = None
+        self.assertEqual(advance_schedule(self.calls, self.client)['state'], 'recorded')
+        definition = SourceCalls(self.box).summary(self.call)['definition']
+        self.assertIsNone(definition['window']['since'])
+        self.assertEqual(definition['subscriptions'], {collection['target_url']: {'collection_uuid': collection['uuid'], 'revision': 7}})
+        self.assertEqual(SourceCalls(self.box).summary(self.call)['target_count'], 1)
+
     def test_authentication_and_malformed_responses_require_explicit_retry_without_blocking_other_calls(self):
         self.record()
         self.client.capabilities.side_effect = Unavailable('stash_token_rejected', 401)
@@ -148,7 +169,7 @@ class SchedulingTests(unittest.TestCase):
         self.box.db.execute('PRAGMA user_version=19')
         self.box.close()
         self.box = self.open()
-        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 21)
+        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 22)
         self.assertEqual(SourceCalls(self.box).summary(self.call), before)
 
     def test_real_http_503_response_is_retained_with_status_but_without_response_secrets(self):

@@ -41,7 +41,7 @@ class MissingMediaArchiveTests(unittest.TestCase):
         self.box.db.execute('DROP TABLE missing_media')
         self.box.db.execute('PRAGMA user_version=18')
         self.assertEqual(self.verify(), current)
-        self.box.db.execute('PRAGMA user_version=22')
+        self.box.db.execute('PRAGMA user_version=23')
         with self.assertRaisesRegex(InvalidArchive, 'Unsupported producer'):
             self.verify()
 
