@@ -44,7 +44,7 @@ def load_capture_verification(source, producer_origin):
         raise InvalidArchive("Capture verification exceeds its size limit")
     proof = decode_json(body)
     manifest = validate_manifest(load_manifest(source))
-    if (not isinstance(proof, dict) or proof.get("verification_method") != "captured-contents"
+    if (not isinstance(proof, dict) or proof.get("verification_method") not in ("captured-contents", "captured-snapshot")
             or proof.get("uuid") != manifest["uuid"]
             or proof.get("manifest_sha256") != hashlib.sha256(json_bytes(manifest)).hexdigest()
             or not isinstance(proof.get("ingestion_receipts"), dict)
@@ -226,7 +226,7 @@ def _verify_archive(source, *, restore, native_validator, producer_origin,
         library, = [entry for entry in databases if entry["role"] == "library"]
         manifest_sha256 = hashlib.sha256(json_bytes(manifest)).hexdigest()
         result = {"uuid": manifest["uuid"], "manifest_sha256": manifest_sha256,
-                  "coverage": manifest["coverage"], "contents_verified": True,
+                  "coverage": manifest["coverage"], "contents_verified": True, "database_audited": True,
                   "verification_method": "isolated-restore" if restore else "streamed-contents"}
         # Both paths checked the reconstructed SQLite bytes before reaching here.
         # Keep this narrower evidence distinct from the optional native audit.

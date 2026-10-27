@@ -159,14 +159,14 @@ class ServerCheckpoint:
             raise InvalidArchive("Unexpected native checkpoint response")
         return response
 
-    def capture(self, destination, *, reserve):
+    def capture(self, destination, *, reserve, verification="deep"):
         self._boundary_released = False
         try:
-            return self._capture(destination, reserve=reserve)
+            return self._capture(destination, reserve=reserve, verification=verification)
         finally:
             self.release_boundary()
 
-    def _capture(self, destination, *, reserve):
+    def _capture(self, destination, *, reserve, verification="deep"):
         from .bundle import connect_readonly, database_metadata
         destination = Path(destination)
         require_space(destination.parent, 0, reserve)
@@ -213,7 +213,7 @@ class ServerCheckpoint:
                     components.append({"role": component["role"], "name": name, "path": destination / name})
             native = destination / "library.sqlite"
             with closing(connect_readonly(native)) as db:
-                metadata = database_metadata(db, "library")
+                metadata = database_metadata(db, "library", verification=verification)
                 ids = [r[0] for r in db.execute("SELECT id FROM file_deletions ORDER BY id")]
                 if ids != (manifest["committed_deletion_ids"] or []):
                     raise InvalidArchive("Native checkpoint journal markers differ from its library")

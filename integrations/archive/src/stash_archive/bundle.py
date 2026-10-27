@@ -34,11 +34,18 @@ VERIFICATION_CACHE_KIB = 256 * 1024
 CAPTURE_VERIFICATION = "capture-verification.json"
 
 
-def sqlite_evidence_binding(manifest, entries):
+def verification_mode(value):
+    if value not in ("deep", "capture"):
+        raise InvalidArchive("Database verification must be deep or capture")
+    return value
+
+
+def sqlite_evidence_binding(manifest, entries, *, verification="deep"):
     """Describe checked SQLite bytes; callers must perform the checks first."""
     return {
         "archive_uuid": manifest["uuid"], "manifest_sha256": hashlib.sha256(json_bytes(manifest)).hexdigest(),
-        "checks": ["integrity_check", "foreign_key_check", "identity"],
+        "checks": (["integrity_check", "foreign_key_check", "identity"]
+                   if verification_mode(verification) == "deep" else ["identity"]),
         "components": [{key: entry[key] for key in ("role", "name", "sha256", "size", "sqlite")}
                        for entry in entries if entry["role"] in SQLITE_ROLES]}
 
@@ -50,15 +57,22 @@ def connect_readonly(path):
     return connection
 
 
-def database_metadata(connection, role):
+def database_metadata(connection, role, *, verification="deep"):
+    verification_mode(verification)
     # Large foreign-key/index checks otherwise churn the default 2 MiB cache
     # on disk-backed restores. This is a connection-local, bounded page cache;
     # it changes neither the database nor the required verification checks.
     connection.execute(f"PRAGMA cache_size=-{VERIFICATION_CACHE_KIB}")
-    if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
-        raise InvalidArchive("SQLite integrity check failed")
-    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        raise InvalidArchive("SQLite foreign key check failed")
+    if verification == "deep":
+        # Re-enter Python during long SQLite scans so termination is responsive.
+        connection.set_progress_handler(lambda: 0, 10000)
+        try:
+            if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+                raise InvalidArchive("SQLite integrity check failed")
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise InvalidArchive("SQLite foreign key check failed")
+        finally:
+            connection.set_progress_handler(None, 0)
     metadata = {"application_id": connection.execute("PRAGMA application_id").fetchone()[0],
                 "user_version": connection.execute("PRAGMA user_version").fetchone()[0]}
     if role == "library":
@@ -87,7 +101,7 @@ def database_metadata(connection, role):
     return metadata
 
 
-def snapshot_database(source, target, role, reserve):
+def snapshot_database(source, target, role, reserve, *, verification="deep"):
     info = regular(source)
     # The destination and compressed objects may coexist while packing.
     wal = Path(str(source) + "-wal")
@@ -102,7 +116,7 @@ def snapshot_database(source, target, role, reserve):
     os.close(fd)
     with closing(connect_readonly(source)) as incoming, closing(sqlite3.connect(target)) as output:
         incoming.backup(output, pages=256, progress=progress, sleep=0.05)
-        metadata = database_metadata(output, role)
+        metadata = database_metadata(output, role, verification=verification)
     with open_regular(target) as output:
         os.fsync(output.fileno())
     return metadata
@@ -122,7 +136,8 @@ def _blob_rows(connection):
 
 def export_archive(database, destination, *, blob_paths=(), components=(), reserve=RESERVE_BYTES,
                    progress=None, producer_origin=None, server_checkpoint=None, artwork_pins=None, media_snapshot=None,
-                   component_stage=None):
+                   component_stage=None, verification="deep", server_cache=None):
+    verification_mode(verification)
     # Capture every download archive before any outbox, then the server last.
     # The native adapter durably queues file completion before archive.add; an
     # acknowledged queue row in turn follows the server's committed receipt.
@@ -132,8 +147,10 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
     if component_stage is not None:
         if server_checkpoint is None or database is not None:
             raise InvalidArchive("Staged external components require their original server checkpoint")
-        if any(c.get("role") not in ("media_manifest", "operating_state") for c in components if isinstance(c, dict)):
+        if any(c.get("role") not in ("media_manifest", "operating_state", "operating_database") for c in components if isinstance(c, dict)):
             raise InvalidArchive("Additional staged-export components must describe generated backup state")
+        if verification == "deep" and component_stage.intent.get("verification", "deep") != "deep":
+            raise InvalidArchive("Capture-only stages cannot certify a deep database audit")
         components = component_stage.export_components(server_checkpoint, reserve) + components
     if artwork_pins is not None and (server_checkpoint is None or blob_paths):
         raise InvalidArchive("Artwork pins require a server checkpoint and replace live blob paths")
@@ -210,15 +227,22 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
                             snapshots[index] = (component["path"], retained[(role, component["name"])])
                             continue
                         path = Path(temp) / f"component-{index}.sqlite"
-                        meta = snapshot_database(component["path"], path, role, reserve)
+                        meta = snapshot_database(component["path"], path, role, reserve, **({} if verification == "deep" else {"verification": verification}))
                         snapshots[index] = (path, meta)
             if server_checkpoint is None:
                 native = Path(temp) / "library.sqlite"
-                metadata = snapshot_database(database, native, "library", reserve)
+                metadata = snapshot_database(database, native, "library", reserve, **({} if verification == "deep" else {"verification": verification}))
             else:
                 # Download/outbox snapshots are already fixed. Download the
                 # server's pinned view once; do not make a second SQLite copy.
-                native, metadata, captured, expected = server_checkpoint.capture(Path(temp) / "server", reserve=reserve)
+                if server_cache is not None:
+                    from .checkpoint_cache import cached_capture
+                    native, metadata, captured, expected = cached_capture(
+                        server_checkpoint, server_cache, reserve=reserve, verification=verification)
+                else:
+                    options = {} if verification == "deep" else {"verification": verification}
+                    native, metadata, captured, expected = server_checkpoint.capture(
+                        Path(temp) / "server", reserve=reserve, **options)
                 server_expected.update(expected)
                 components.extend(captured)
             if component_stage is not None:
@@ -273,8 +297,9 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
             manifest_sha256 = hashlib.sha256(body).hexdigest()
             proof = {"uuid": manifest["uuid"], "manifest_sha256": manifest_sha256,
                      "coverage": manifest["coverage"], "contents_verified": True,
-                     "verification_method": "captured-contents",
-                     "sqlite_snapshots": sqlite_evidence_binding(manifest, databases),
+                     "verification_method": "captured-contents" if verification == "deep" else "captured-snapshot",
+                     "database_audited": verification == "deep",
+                     "sqlite_snapshots": sqlite_evidence_binding(manifest, databases, verification=verification),
                      "ingestion_receipts": dict(producer_proof, archive_uuid=manifest["uuid"],
                          manifest_sha256=manifest_sha256,
                          components=[{key: entry[key] for key in ("role", "name", "sha256")}

@@ -11,20 +11,27 @@ exact archive and library bytes. This does not certify the remaining shared
 media, filesystem-journal and configuration boundary.
 
 Exports with a producer origin retain `capture-verification.json` before the
-final manifest. It binds the SQLite/producer checks already performed during
-capture to the exact packed component hashes, with `verification_method:
-"captured-contents"`. The host publisher reuses this evidence and verifies uploads
-without reconstructing those snapshots and repeating their audits. Missing,
-changed or unknown remote objects still require checksum verification; an invalid
-capture record cannot silently fall back to a different verification method.
+final manifest. The default `verification="deep"` checks SQLite integrity and
+foreign keys and reports `captured-contents`. Host automation can explicitly use
+`verification="capture"`: SQLite-consistent snapshots still receive identity,
+clean migration ledger, producer receipt and packed-byte checks, but the evidence
+reports `captured-snapshot`, `database_audited: false`, and only `identity` in its
+SQLite checks. This is a capture/transport promise, not a corruption audit.
 
-Older sealed archives without this evidence use `verify_archive_contents`,
-streaming every artifact and materializing only SQLite files. This path reports
-`streamed-contents`. Both paths bind `sqlite_snapshots` to every archived database
-and make no native application audit claim. Passing `native_validator` explicitly
-to the streaming API adds that audit. Full restore commands report
-`isolated-restore`; neither capture evidence nor streaming replaces that drill.
-No verification path starts a server or worker.
+`export_archive(..., server_cache=PRIVATE_OWNED_DIRECTORY)` retains a completed
+server copy and its check receipt before packing. A packing interruption keeps
+that copy. Retries bind the original sealed checkpoint and rehash its exact bytes
+without repeating completed deep scans. Changed bytes, identities or policies
+fail closed. The caller serializes access and releases this cache only after
+verified publication. Staged worker databases similarly reuse their original
+checks after their recorded digest and identity have been checked again.
+
+`verify_archive_contents` streams every artifact and materializes SQLite files
+for full integrity and foreign-key checks, reporting `streamed-contents` and
+`database_audited: true`. Explicit `native_validator` adds the application audit.
+Full restore commands report `isolated-restore` and always run the complete checks;
+capture-only evidence cannot substitute for a restore drill. Historical deep
+capture proofs remain readable. No verification path starts a server or worker.
 
 `export --server` captures the running native application's fixed database,
 configuration and deletion recovery components after declared producer journals.

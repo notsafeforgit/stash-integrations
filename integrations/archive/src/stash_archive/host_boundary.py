@@ -40,11 +40,11 @@ class HostFilesystemCapture:
                  "device": identity[0], "inode": identity[1]}
                 for identity, path in self.barrier.roots]
 
-    def prepare(self, cache, client, components, *, reserve=50 << 30):
+    def prepare(self, cache, client, components, *, reserve=50 << 30, verification="deep"):
         from .component_stage import ComponentStage
         if self.components is not None or client.boundary is not self:
             raise InvalidArchive("Host component staging requires its original checkpoint client")
-        self.components = ComponentStage(cache, client, components, self.barrier, reserve=reserve)
+        self.components = ComponentStage(cache, client, components, self.barrier, reserve=reserve, verification=verification)
         return self.components
 
     def validate(self, boundary):

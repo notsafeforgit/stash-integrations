@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 from .artwork_pins import directory
-from .bundle import NAME, ROLES, SQLITE_ROLES, connect_readonly, database_metadata, snapshot_database
+from .bundle import NAME, ROLES, SQLITE_ROLES, connect_readonly, database_metadata, snapshot_database, verification_mode
 from .checkpoint_release import checkpoint_digest
 from .server_checkpoint import RESERVED
 from .storage import (HEX, InvalidArchive, decode_json, json_bytes, open_regular,
@@ -57,7 +57,8 @@ def copy_file(source, target, reserve):
 
 
 class ComponentStage:
-    def __init__(self, cache, client, components, barrier, *, reserve=50 << 30):
+    def __init__(self, cache, client, components, barrier, *, reserve=50 << 30, verification="deep"):
+        verification_mode(verification)
         if not barrier.acquired or client.boundary is None:
             raise InvalidArchive("Component staging requires the native filesystem capture barrier")
         self.cache = Path(cache).resolve(strict=True)
@@ -83,6 +84,8 @@ class ComponentStage:
         plan.sort(key=lambda c: (c["role"], c["name"]))
         self.intent = {"format": FORMAT, "version": 1, "uuid": client.request_id, "server": client.server,
                        "request_sha256": client.request_hash(reserve), "components": plan}
+        if verification != "deep":
+            self.intent["verification"] = verification
         if len(json_bytes(self.intent)) > MAX_MANIFEST:
             raise InvalidArchive("External backup inventory exceeds its size limit")
         require_space(self.cache, 0, reserve)
@@ -107,7 +110,7 @@ class ComponentStage:
                 target = self.component_path(index)
                 metadata = None
                 if spec["role"] in SQLITE_ROLES:
-                    metadata = snapshot_database(source, target, spec["role"], reserve)
+                    metadata = snapshot_database(source, target, spec["role"], reserve, **({} if verification == "deep" else {"verification": verification}))
                 else:
                     copy_file(source, target, reserve)
                 digest, size = digest_file(target)
@@ -174,7 +177,7 @@ class ComponentStage:
                 raise InvalidArchive("Retained external component changed")
             if entry["role"] in SQLITE_ROLES:
                 with closing(connect_readonly(path)) as db:
-                    if database_metadata(db, entry["role"]) != entry["sqlite"]:
+                    if database_metadata(db, entry["role"], verification="capture") != entry["sqlite"]:
                         raise InvalidArchive("Retained external database identity changed")
         return self
 
@@ -254,7 +257,8 @@ def release_published_components(source, client, cache):
     stage.path = stage.cache / client.request_id
     directory(stage.path, private=True)
     stage.intent, stage.record = stage.read("intent.json"), stage.read("manifest.json")
-    if (not isinstance(stage.intent, dict) or set(stage.intent) != {"format", "version", "uuid", "server", "request_sha256", "components"}
+    if (not isinstance(stage.intent, dict) or set(stage.intent) - {"verification"} != {"format", "version", "uuid", "server", "request_sha256", "components"}
+            or stage.intent.get("verification", "deep") not in ("deep", "capture")
             or stage.intent["format"] != FORMAT or type(stage.intent["version"]) is not int or stage.intent["version"] != 1
             or stage.intent["uuid"] != client.request_id or not isinstance(stage.intent["components"], list)
             or len(stage.intent["components"]) > 16384 or stage.record != decode_json(output.getvalue())):

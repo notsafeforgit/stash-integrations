@@ -242,3 +242,48 @@ class ServerCheckpointTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(InvalidArchive):
                 release_published_checkpoint(self.output, self.client)
         self.assertEqual(self.requests, [])
+
+    def test_completed_capture_survives_failed_pack_without_repeating_deep_scan(self):
+        from stash_archive.bundle import database_metadata
+        cache = self.root / 'capture-cache'
+        cache.mkdir(mode=0o700)
+        checks = []
+        def metadata(db, role, **options):
+            checks.append(options.get('verification', 'deep'))
+            return database_metadata(db, role, **options)
+        with patch('stash_archive.bundle.database_metadata', side_effect=metadata), \
+             patch('stash_archive.bundle.store_file', side_effect=OSError('packing interrupted')):
+            with self.assertRaisesRegex(OSError, 'packing interrupted'):
+                self.export(server_cache=cache)
+        self.assertFalse(self.output.exists())
+        self.assertTrue((cache / 'verified.json').is_file())
+        first_downloads = sum('/components/' in path for _, path, _ in self.requests)
+        with patch('stash_archive.checkpoint_cache.database_metadata', side_effect=metadata):
+            self.export(server_cache=cache)
+        self.assertEqual(checks, ['deep', 'capture'])
+        self.assertEqual(first_downloads, sum('/components/' in path for _, path, _ in self.requests))
+        self.assertEqual(sum(method == 'POST' for method, _, _ in self.requests), 1)
+        import_archive(self.output, self.root / 'restored-cache', reserve=0)
+
+    def test_changed_retained_capture_cannot_be_reused(self):
+        from stash_archive.checkpoint_cache import cached_capture
+        cache = self.root / 'capture-cache'
+        cache.mkdir(mode=0o700)
+        cached_capture(self.client, cache, reserve=0, verification='capture')
+        path = cache / 'server/config.yml'
+        path.write_bytes(b'changed retained config')
+        with self.assertRaisesRegex(InvalidArchive, 'changed after verification'):
+            self.export(server_cache=cache, verification='capture')
+        self.assertFalse(self.output.exists())
+
+    def test_interrupted_copy_retries_same_checkpoint_and_never_recaptures(self):
+        from stash_archive.checkpoint_cache import cached_capture
+        cache = self.root / 'capture-cache'
+        cache.mkdir(mode=0o700)
+        self.mode = 'corrupt'
+        with self.assertRaises(InvalidArchive):
+            cached_capture(self.client, cache, reserve=0, verification='capture')
+        self.mode = 'ok'
+        cached_capture(self.client, cache, reserve=0, verification='capture')
+        self.assertTrue((cache / 'verified.json').exists())
+        self.assertEqual(sum(method == 'POST' for method, _, _ in self.requests), 1)

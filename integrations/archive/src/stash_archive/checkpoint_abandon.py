@@ -124,7 +124,8 @@ def abandon_components(cache, client, reserve, receipt):
         if any(path.iterdir()):
             raise InvalidArchive("Unowned external component files require inspection")
         return
-    if (not isinstance(intent, dict) or set(intent) != {"format", "version", "uuid", "server", "request_sha256", "components"}
+    if (not isinstance(intent, dict) or set(intent) - {"verification"} != {"format", "version", "uuid", "server", "request_sha256", "components"}
+            or intent.get("verification", "deep") not in ("deep", "capture")
             or intent["format"] != COMPONENT_FORMAT or type(intent["version"]) is not int or intent["version"] != 1
             or intent["uuid"] != client.request_id or intent["server"] != client.server
             or intent["request_sha256"] != receipt["request_sha256"]
