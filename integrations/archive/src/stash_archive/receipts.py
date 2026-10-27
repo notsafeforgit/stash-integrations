@@ -14,7 +14,7 @@ import tempfile
 import uuid
 from urllib.parse import urlsplit
 
-from .bundle import FORMAT, _target, connect_readonly, import_archive, iter_artifacts
+from .bundle import FORMAT, VERIFICATION_CACHE_KIB, _target, connect_readonly, database_metadata, import_archive, iter_artifacts
 from .storage import HEX, RESERVE_BYTES, InvalidArchive, decode_json, json_bytes
 
 MAX_EVENT = 5 << 20
@@ -223,10 +223,42 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
             "producers": sorted(reports, key=lambda report: report["producer_uuid"])}
 
 
+def verify_snapshot_producers(database, outboxes, expected_origin):
+    """Check producer identity coverage for an already coordinated capture.
+
+    The exporter must first validate the retained external stage against the
+    sealed native checkpoint. Historical event/receipt reconciliation belongs
+    to the independent deep audit; this report does not claim it was performed.
+    """
+    expected_origin = origin(expected_origin)
+    producers = set()
+    with closing(connect_readonly(Path(database))) as library:
+        database_metadata(library, "library", verification="capture")
+        registered = {identifier(row[0]) for row in library.execute("SELECT uuid FROM ingest_producers")}
+    for path in outboxes:
+        with closing(connect_readonly(Path(path))) as queue:
+            metadata = database_metadata(queue, "producer_outbox", verification="capture")
+            if metadata["user_version"] not in range(1, 23):
+                raise InvalidArchive("Unsupported producer snapshot for identity verification")
+            if origin(metadata["endpoint"]) != expected_origin:
+                raise InvalidArchive("Producer snapshot belongs to another origin")
+            producer = identifier(metadata["producer_uuid"])
+            if producer in producers:
+                raise InvalidArchive("Duplicate producer snapshot in identity boundary")
+            producers.add(producer)
+    if producers != registered:
+        raise InvalidArchive("Producer snapshots do not match all registered native producers")
+    return {"format": FORMAT + ".ingestion-producer-bindings", "version": 1,
+            "coverage": "coordinated-producer-snapshots", "origin": expected_origin,
+            "registered_producers_complete": True, "receipts_audited": False,
+            "producers": [{"producer_uuid": producer} for producer in sorted(producers)]}
+
+
 def verify_snapshot_receipts(database, outboxes, expected_origin):
     """Check closed SQLite-aware copies without activating server/producer state."""
     with ExitStack() as stack:
         library = stack.enter_context(closing(connect_readonly(Path(database))))
+        library.execute(f"PRAGMA cache_size=-{VERIFICATION_CACHE_KIB}")
         library.execute("BEGIN")
         queues = []
         for path in outboxes:

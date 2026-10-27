@@ -250,10 +250,18 @@ def export_archive(database, destination, *, blob_paths=(), components=(), reser
             if media_snapshot is not None:
                 media_snapshot.open_bound(server_checkpoint.boundary_receipt).verify()
             if producer_origin is not None:
-                from .receipts import verify_snapshot_receipts
-                producer_proof = verify_snapshot_receipts(native,
-                    [snapshots[index][0] for index, component in enumerate(components)
-                     if component["role"] == "producer_outbox"], producer_origin)
+                from .receipts import verify_snapshot_producers, verify_snapshot_receipts
+                outboxes = [snapshots[index][0] for index, component in enumerate(components)
+                            if component["role"] == "producer_outbox"]
+                if verification == "capture" and component_stage is not None:
+                    # The stage was sealed before the native copy under the
+                    # same capture barrier and validated above. Trust that
+                    # coordinated snapshot; audit historical receipts separately.
+                    producer_proof = verify_snapshot_producers(native, outboxes, producer_origin)
+                    producer_proof["external_components"] = component_stage.binding()
+                    producer_proof["checkpoint_uuid"] = server_checkpoint.request_id
+                else:
+                    producer_proof = verify_snapshot_receipts(native, outboxes, producer_origin)
             add(native, "library", "library", metadata)
             pinned = artwork_pins.open_bound(server_checkpoint.boundary_receipt).verify() if artwork_pins is not None else None
             with closing(connect_readonly(native)) as connection:

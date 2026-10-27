@@ -14,7 +14,7 @@ Exports with a producer origin retain `capture-verification.json` before the
 final manifest. The default `verification="deep"` checks SQLite integrity and
 foreign keys and reports `captured-contents`. Host automation can explicitly use
 `verification="capture"`: SQLite-consistent snapshots still receive identity,
-clean migration ledger, producer receipt and packed-byte checks, but the evidence
+clean migration ledger, coordinated producer identity and packed-byte checks, but the evidence
 reports `captured-snapshot`, `database_audited: false`, and only `identity` in its
 SQLite checks. This is a capture/transport promise, not a corruption audit.
 
@@ -96,3 +96,11 @@ Schema 21 adds only a reverse index on source request/caller ticket membership.
 Version 0.6.10 accepts it using the same receipt and scheduling verification as
 schema 20. No archive format or content semantics change. Deploy the new reader
 and shared-outbox command clients before workers migrate their queues.
+
+For coordinated host captures, nightly producer validation checks native lineage,
+all registered producer identities, origins and the exact staged outboxes bound
+to the sealed filesystem checkpoint. Its `ingestion-producer-bindings` report
+explicitly says `receipts_audited: false`. It never claims that historical events,
+acknowledgements, admissions or jobs have been reconciled. Independent database
+and restore audits still perform that complete reconciliation. Uncoordinated
+exports retain full receipt checks even with `verification="capture"`.

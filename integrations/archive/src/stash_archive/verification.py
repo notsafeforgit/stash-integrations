@@ -50,7 +50,78 @@ def load_capture_verification(source, producer_origin):
             or not isinstance(proof.get("ingestion_receipts"), dict)
             or proof["ingestion_receipts"].get("origin") != expected_origin):
         raise InvalidArchive("Capture verification does not match this archive and producer origin")
+    validate_producer_bindings(source, manifest, proof)
     return proof
+
+
+def validate_producer_bindings(source, manifest, proof):
+    """A lightweight producer report requires the exact sealed capture barrier."""
+    from .receipts import FORMAT as NATIVE_FORMAT, origin
+    from .component_stage import FORMAT as STAGE_FORMAT, MANIFEST, MAX_MANIFEST as STAGE_LIMIT
+    from .checkpoint_release import archived_boundary
+    from .filesystem_boundary import canonical_uuid
+    from .server_checkpoint import ServerCheckpoint
+    import io
+
+    report = proof.get("ingestion_receipts", {})
+    if report.get("format") != NATIVE_FORMAT + ".ingestion-producer-bindings":
+        if report.get("receipts_audited") is False:
+            raise InvalidArchive("Unknown lightweight producer validation proof")
+        return
+    checkpoint = report.get("checkpoint_uuid")
+    if (proof.get("verification_method") != "captured-snapshot"
+            or proof.get("database_audited") is not False
+            or report.get("receipts_audited") is not False
+            or report.get("registered_producers_complete") is not True
+            or type(report.get("version")) is not int or report["version"] != 1
+            or report.get("coverage") != "coordinated-producer-snapshots"
+            or not canonical_uuid(checkpoint)):
+        raise InvalidArchive("Producer identities cannot claim a historical receipt audit")
+    expected_origin = origin(report.get("origin"))
+    selected = {(entry["role"], entry["name"]): entry for entry in iter_artifacts(source, manifest)
+                if entry["role"] == "producer_outbox" or (entry["role"], entry["name"]) == MANIFEST}
+    descriptor = selected.get(MANIFEST)
+    if descriptor is None or descriptor["size"] > STAGE_LIMIT:
+        raise InvalidArchive("Producer identities require the archived coordinated component stage")
+    output = io.BytesIO()
+    write_artifact(source, descriptor, output)
+    stage = decode_json(output.getvalue())
+    if not isinstance(stage, dict):
+        raise InvalidArchive("Invalid archived producer component stage")
+    components = stage.get("components")
+    if (stage.get("format") != STAGE_FORMAT or type(stage.get("version")) is not int or stage["version"] != 1
+            or stage.get("uuid") != checkpoint or not isinstance(components, list)):
+        raise InvalidArchive("Producer identity stage differs from its checkpoint")
+    binding = {"format": STAGE_FORMAT, "version": 1, "uuid": checkpoint,
+               "sha256": descriptor["sha256"], "bytes": descriptor["size"], "count": len(components)}
+    class ArchivedCheckpoint:
+        boundary = True
+        validate = ServerCheckpoint.validate
+        request_id = checkpoint
+    boundary = archived_boundary(source, ArchivedCheckpoint())
+    if report.get("external_components") != binding or boundary.get("details", {}).get("components") != binding:
+        raise InvalidArchive("Producer identities differ from the sealed component boundary")
+    producers, staged = set(), set()
+    for component in components:
+        if not isinstance(component, dict):
+            raise InvalidArchive("Invalid archived staged component")
+        if component.get("role") != "producer_outbox":
+            continue
+        key = (component["role"], component["name"])
+        entry = selected.get(key)
+        if (key in staged or entry is None or entry["sha256"] != component["sha256"]
+                or entry["size"] != component["bytes"] or entry.get("sqlite") != component.get("sqlite")):
+            raise InvalidArchive("Producer identity proof lost an exact staged outbox")
+        staged.add(key)
+        metadata = entry["sqlite"]
+        producer = metadata.get("producer_uuid")
+        if (not canonical_uuid(producer) or producer in producers
+                or origin(metadata.get("endpoint")) != expected_origin):
+            raise InvalidArchive("Producer identity proof has a foreign or duplicate producer")
+        producers.add(producer)
+    if (staged != {key for key in selected if key[0] == "producer_outbox"}
+            or report.get("producers") != [{"producer_uuid": value} for value in sorted(producers)]):
+        raise InvalidArchive("Producer identity proof does not cover every archived outbox")
 
 
 def validator_output(executable, database, timeout, *, lock_fd=None):

@@ -32,3 +32,43 @@ class CapturePolicyTests(unittest.TestCase):
         with closing(sqlite3.connect(':memory:')) as db:
             with self.assertRaises(InvalidArchive):
                 database_metadata(db, 'library', verification='off')
+
+
+from test_receipts import ReceiptFixture, ORIGIN, PRODUCER
+from stash_archive.receipts import verify_snapshot_producers
+
+
+class ProducerBindingTests(ReceiptFixture):
+    def test_identity_report_does_not_claim_historical_receipts_are_valid(self):
+        self.accepted(self.event())
+        self.db.execute("DELETE FROM ingest_receipts")
+        self.db.commit()
+        report = verify_snapshot_producers(self.library, [self.outbox], ORIGIN)
+        self.assertFalse(report["receipts_audited"])
+        self.assertTrue(report["registered_producers_complete"])
+        self.assertEqual(report["producers"], [{"producer_uuid": PRODUCER}])
+        with self.assertRaisesRegex(InvalidArchive, "missing from the native snapshot"):
+            self.verify()
+
+    def test_identity_report_requires_all_producers_exactly_once(self):
+        for paths in ([], [self.outbox, self.outbox]):
+            with self.subTest(paths=paths), self.assertRaises(InvalidArchive):
+                verify_snapshot_producers(self.library, paths, ORIGIN)
+        with self.assertRaisesRegex(InvalidArchive, "another origin"):
+            verify_snapshot_producers(self.library, [self.outbox], "https://foreign.example")
+
+    def test_unknown_outbox_schema_is_not_accepted_as_a_binding(self):
+        with closing(sqlite3.connect(self.outbox)) as db:
+            db.execute("PRAGMA user_version=999")
+        with self.assertRaisesRegex(InvalidArchive, "Unsupported producer"):
+            verify_snapshot_producers(self.library, [self.outbox], ORIGIN)
+
+    def test_uncoordinated_capture_still_reconciles_receipts(self):
+        from stash_archive.bundle import export_archive
+        self.accepted(self.event())
+        self.db.execute("DELETE FROM ingest_receipts")
+        self.db.commit()
+        with self.assertRaisesRegex(InvalidArchive, "missing from the native snapshot"):
+            export_archive(self.library, self.root / "uncoordinated", reserve=0,
+                           verification="capture", producer_origin=ORIGIN,
+                           components=[{"role": "producer_outbox", "name": "queue.sqlite", "path": self.outbox}])

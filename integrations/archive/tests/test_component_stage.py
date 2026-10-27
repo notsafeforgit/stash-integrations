@@ -57,7 +57,9 @@ class ComponentStageTests(ReceiptFixture):
                 self.creates += 1
                 ready = {"uuid": client.request_id, "token": str(uuid.uuid4()), "request_sha256": client.request_hash(reserve),
                          "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()}
-                self.receipt = {**{k: ready[k] for k in ("uuid", "token", "request_sha256")}, "details": host(ready)}
+                self.receipt = {**{k: ready[k] for k in ("uuid", "token", "request_sha256")}, "details": host(ready),
+                                "format": "org.notsafeforgit.stash.filesystem-checkpoint", "version": 1,
+                                "confirmed_at": datetime.now(timezone.utc).isoformat()}
                 metadata = snapshot_database(self.library, self.native, "library", reserve)
                 payloads = {"library.sqlite": self.native.read_bytes(), "config.yml": b"retained native config",
                             "runtime-overrides.yml": b"{}", "deletions.zip": b"opaque recovery fixture",
@@ -127,6 +129,41 @@ class ComponentStageTests(ReceiptFixture):
             self.assertEqual(db.execute("SELECT entry FROM archive").fetchall(), [("original",)])
         self.assertEqual((self.root / "restored/components/worker_profile/profile.json").read_bytes(), b'{"profile":"original","private":"retained"}\n')
         self.assertEqual(self.creates, 1)
+
+    def test_coordinated_capture_uses_bound_identities_and_audits_receipts_separately(self):
+        import copy
+        from stash_archive.verification import load_capture_verification, validate_producer_bindings, verify_archive_contents
+        from stash_archive.storage import load_manifest
+        self.accepted(self.event())
+        with self.host() as host:
+            client = self.client(host)
+            stage = host.prepare(self.cache, client, self.components, reserve=0)
+            stage.seal()
+            capture = client.capture
+            client.capture = lambda destination, *, reserve, verification: capture(destination, reserve=reserve)
+            output = self.root / "nightly"
+            with patch("stash_archive.receipts.verify_snapshot_receipts", side_effect=AssertionError("historical audit in nightly capture")):
+                export_archive(None, output, reserve=0, server_checkpoint=client,
+                               producer_origin=ORIGIN, component_stage=stage, verification="capture")
+        proof = load_capture_verification(output, ORIGIN)
+        self.assertFalse(proof["ingestion_receipts"]["receipts_audited"])
+        self.assertEqual(proof["ingestion_receipts"]["external_components"], stage.binding())
+        self.assertEqual(proof["ingestion_receipts"]["checkpoint_uuid"], client.request_id)
+        for field, value in (("checkpoint_uuid", str(uuid.uuid4())), ("external_components", {}),
+                             ("producers", []), ("origin", "https://other.example")):
+            changed = copy.deepcopy(proof)
+            changed["ingestion_receipts"][field] = value
+            with self.subTest(field=field), self.assertRaises(InvalidArchive):
+                validate_producer_bindings(output, load_manifest(output), changed)
+        changed = copy.deepcopy(proof)
+        changed["verification_method"] = "captured-contents"
+        changed["database_audited"] = True
+        with self.assertRaises(InvalidArchive):
+            validate_producer_bindings(output, load_manifest(output), changed)
+        audited = verify_archive_contents(output, producer_origin=ORIGIN, reserve=0)
+        self.assertTrue(audited["database_audited"])
+        self.assertEqual(audited["ingestion_receipts"]["producers"][0]["events"], 1)
+        self.assertNotIn("receipts_audited", audited["ingestion_receipts"])
 
     def test_reopen_after_prepare_without_seal_cannot_start_new_capture(self):
         with self.host() as host:
