@@ -108,14 +108,28 @@ def snapshot_database(source, target, role, reserve, *, verification="deep"):
     estimated = info.st_size + (regular(wal).st_size if wal.exists() else 0)
     require_space(Path(target).parent, estimated * 2, reserve)
     deadline = time.monotonic() + 3600
+    previous = None
     def progress(status, remaining, total):
+        nonlocal previous
         if time.monotonic() > deadline:
             raise InvalidArchive("SQLite snapshot deadline exceeded")
+        if status in (sqlite3.SQLITE_OK, sqlite3.SQLITE_DONE):
+            if previous is not None and (total != previous[1] or remaining >= previous[0]):
+                raise InvalidArchive("SQLite snapshot restarted instead of making forward progress")
+            previous = remaining, total
         require_space(Path(target).parent, 0, reserve)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
     with closing(connect_readonly(source)) as incoming, closing(sqlite3.connect(target)) as output:
-        incoming.backup(output, pages=256, progress=progress, sleep=0.05)
+        # Pin one read view before stepping the backup. Otherwise every commit
+        # from another connection can restart the copy from its first page.
+        # WAL writers remain available while this bounded read transaction runs.
+        incoming.execute("BEGIN")
+        try:
+            incoming.execute("SELECT rootpage FROM sqlite_schema LIMIT 1").fetchone()
+            incoming.backup(output, pages=256, progress=progress, sleep=0.05)
+        finally:
+            incoming.rollback()
         metadata = database_metadata(output, role, verification=verification)
     with open_regular(target) as output:
         os.fsync(output.fileno())

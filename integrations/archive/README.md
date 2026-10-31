@@ -10,6 +10,13 @@ with producer receipt checks on one temporary restore. Both proofs identify the
 exact archive and library bytes. This does not certify the remaining shared
 media, filesystem-journal and configuration boundary.
 
+SQLite copies pin a read transaction for the duration of the copy, so concurrent
+WAL commits cannot restart an incremental backup. Writers can keep committing;
+the copy retains its original consistent view. A progress guard rejects a
+restarted copy immediately, and the existing deadline and space reserve still
+apply. The source read transaction ends before snapshot validation and is also
+released on interruption. Coordinated producer/media boundaries remain required.
+
 Exports with a producer origin retain `capture-verification.json` before the
 final manifest. The default `verification="deep"` checks SQLite integrity and
 foreign keys and reports `captured-contents`. Host automation can explicitly use
