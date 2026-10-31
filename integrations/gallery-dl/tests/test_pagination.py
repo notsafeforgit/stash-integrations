@@ -123,9 +123,11 @@ class PaginationTests(unittest.TestCase):
         producer, anchor = self.resumed(page)
         calls = []
         target.api.user = Mock(return_value={'username': 'example', 'id': '456'})
-        target.api._extract_fb_tokens = Mock(return_value=('fixture', 'fixture'))
-        target.api._extract_docid = Mock(return_value=None)
-        target.cache = lambda fn, *args, **kwargs: fn(*args)
+        # Token/query discovery is upstream's concern. Exercise its actual
+        # feed pagination against our durable cursor contract with only request
+        # preparation stubbed; changes to Relay parameter discovery are allowed.
+        target.api._prepare_graphql = lambda opname, variables, *args: ({}, {
+            'doc_id': 'fixture', 'fb_api_req_friendly_name': opname, 'variables': json.dumps(variables)})
 
         def request(url, **kwargs):
             body = kwargs.get('data', {})

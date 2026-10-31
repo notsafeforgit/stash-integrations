@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 
 [project.optional-dependencies]
 gallery = [
-  "gallery-dl @ git+https://codeberg.org/mikf/gallery-dl.git@07f5d2a11b41f5531ec5f7b54f9199ca6bb5fbe0",
+  "gallery-dl @ git+https://codeberg.org/mikf/gallery-dl.git@8b3f5ee361ee44187b71e310282837be4b1a0a2e",
   "yt-dlp[curl-cffi] @ git+https://github.com/yt-dlp/yt-dlp.git@897341241f2bfb2439fe0367f4c7c9ccd29a3828",
 ]
 

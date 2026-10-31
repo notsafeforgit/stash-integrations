@@ -45,7 +45,7 @@ def manifest(data):
     return {**value, "post_id": post_id, "items": items}
 
 
-def _entry(item, *, static_videos=True):
+def _entry(item):
     from .source import _id, _numeric
 
     if item is None or isinstance(item, dict) and item.get("pk") is None:
@@ -54,8 +54,6 @@ def _entry(item, *, static_videos=True):
         raise InvalidData("Invalid original Instagram media item")
     kind = ("video" if item.get("media_type") == 2 or item.get("video_versions") else
             "image" if item.get("media_type") == 1 or item.get("image_versions2") else "unknown")
-    if not static_videos and item.get("original_media_type") == 1 and item.get("media_type") != 1:
-        kind = "image"
     return {"id": _numeric(_id(item["pk"])), "kind": kind}
 
 
@@ -90,7 +88,7 @@ def install(extractor):
 
     def parse_post(self, post):
         story, album, original = original_media(post)
-        entries = [_entry(item, static_videos=self._static_video) for item in original]
+        entries = [_entry(item) for item in original]
         originals = {}
         if story:
             for item, entry in zip(original, entries):
@@ -101,6 +99,17 @@ def install(extractor):
                     raise InvalidData("Instagram story lacks its original publication date")
                 originals[entry["id"]] = (entry, stamp)
         result = parse(post)
+        # Upstream owns media selection, including static-video handling. Keep
+        # our original IDs/order/missing slots, but describe the files its parser
+        # actually selected instead of duplicating website-specific heuristics.
+        by_id = {entry["id"]: entry for entry in entries if entry is not None}
+        for file in result["_files"]:
+            if file.get("audio_url"):
+                continue
+            media_id = _numeric(_id(file["media_id"]))
+            if media_id not in by_id:
+                raise InvalidData("Instagram selected media outside its original attachment list")
+            by_id[media_id]["kind"] = "video" if file.get("video_url") else "image"
         if story:
             for file in result["_files"]:
                 # The pinned parser includes music-sticker audio even when

@@ -240,13 +240,41 @@ class InstagramGalleryTests(unittest.TestCase):
     def test_static_video_policy_retains_source_positions_with_the_downloaded_image_kind(self):
         config.set(('extractor',), 'static-videos', False)
         record = carousel()
-        record['carousel_media'][2]['original_media_type'] = 1
+        record['carousel_media'][2]['original_media_type'] = 2
+        record['carousel_media'][2]['video_dash_manifest'] = '<MPD><Representation frameRate="1/1"/></MPD>'
         task = self.task(record, fixture=InstagramFixture)
         self.assertEqual(task.run(), 0)
         files = [e for e in self.events() if e['kind'] == 'file.completed']
         self.assertEqual([e['media_kind'] for e in files], ['image', 'image'])
         captures = [e for e in self.events() if e['kind'] == 'source.capture']
         self.assertEqual(captures[0]['source']['instagram_media']['items'][2], {'id': '702', 'kind': 'image'})
+
+    def test_original_media_type_does_not_override_the_selected_video(self):
+        config.set(('extractor',), 'static-videos', False)
+        record = carousel()
+        record['carousel_media'][2]['original_media_type'] = 1
+        task = self.task(record, fixture=InstagramFixture)
+        self.assertEqual(task.run(), 0)
+        files = [e for e in self.events() if e['kind'] == 'file.completed']
+        self.assertEqual([e['media_kind'] for e in files], ['image', 'scene'])
+        self.assertEqual([e['source']['attachment']['value'] for e in files], ['701', '702'])
+        captures = [e for e in self.events() if e['kind'] == 'source.capture']
+        self.assertEqual(captures[0]['source']['instagram_media']['items'],
+                         [{'id': '701', 'kind': 'image'}, None, {'id': '702', 'kind': 'video'}])
+
+    def test_selected_media_outside_original_membership_is_rejected_before_download(self):
+        parse = InstagramFixture._parse_post
+
+        def unexpected_media(target, record):
+            result = parse(target, record)
+            result['_files'][0]['media_id'] = '999'
+            return result
+
+        with patch.object(InstagramFixture, '_parse_post', unexpected_media):
+            task = self.task(carousel(), fixture=InstagramFixture)
+            self.assertNotEqual(task.run(), 0)
+        self.assertEqual(self.producer.failure_code, 'source_rejected')
+        self.assertEqual(self.events(), [])
 
     def test_invalid_story_dates_fail_before_recording_captures_or_downloading(self):
         for stamp in (None, True, float('nan'), float('inf'), 'unknown'):

@@ -2634,8 +2634,12 @@ timestamps, download order and output numbering cannot supply post identity/orde
 
 Extra audio, previews and highlight covers must be disabled for native download
 intake. Music stickers still retain their metadata while their disabled audio
-outputs are ignored. The existing static-video choice is preserved. New captures
-share post fields and keep per-file dates, sizes, URLs and attribution in patches;
+outputs are ignored. Gallery-dl owns static-video detection and output selection. The adapter
+retains the original attachment IDs, order and missing slots, then records the
+media kinds selected by gallery-dl; it does not reimplement upstream selection
+rules. Offline compatibility checks protect this Stash contract and resumable
+pagination, while upstream token and query-parameter discovery remain upstream's
+responsibility. New captures share post fields and keep per-file dates, sizes, URLs and attribution in patches;
 older captures without the versioned evidence retain their original partition
 for migration, proof verification and replay.
 

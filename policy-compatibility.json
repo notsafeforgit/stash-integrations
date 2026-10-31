@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "69033a4551e8784af4f4eca0b21810676c520dfd59e3231f88b9d65057ab72bf",
+  "implementation_sha256": "f8c97a098a4dc10d3457bb459110153def57907bd40eaa4096b5b25a023b2a99",
   "decision": "compatible",
-  "reason": "Adds explicitly reviewed archive-directory storage bindings for current and retained profiles, preserving original policies, filenames, archive keys, destinations, windows, cursors and receipts. Missing reviewed storage or an unreadable configured archive stops transfers instead of bypassing duplicate protection. Existing protocol-v1 start and completion evidence remains unchanged; readers distinguish local file availability from a recorded transfer without rewriting reports."
+  "reason": "Use gallery-dl selected visual media to describe Instagram attachment kinds while preserving original media IDs, album ordering, missing slots and per-story dates. Upstream retains authority over static-video detection and GraphQL request preparation. Existing captures, policies, windows, cursor checkpoints, archive keys, filenames and receipts remain unchanged; the source and execution contracts are preserved."
 }
