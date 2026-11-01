@@ -1,3 +1,4 @@
+from test_outbox_migration import schema_twenty_two
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -159,6 +160,7 @@ class DetailAdmissionMigrationTests(DetailFixture):
         self.box.db.execute("DROP TABLE IF EXISTS deleted_media")
         self.box.db.execute("DROP TABLE IF EXISTS worker_configurations")
         self.box.db.execute("DROP INDEX request_run_tickets")
+        schema_twenty_two(self.box.db)
         self.box.db.execute("PRAGMA user_version=14")
         tables = [r[0] for r in self.box.db.execute("SELECT name FROM sqlite_schema WHERE type='table'")]
         columns = {name: ','.join(r[1] for r in self.box.db.execute('PRAGMA table_info("'+name+'")')) for name in tables}
@@ -180,6 +182,7 @@ class DetailAdmissionMigrationTests(DetailFixture):
         self.box.db.execute("DROP TABLE IF EXISTS deleted_media")
         self.box.db.execute("DROP TABLE IF EXISTS worker_configurations")
         self.box.db.execute("DROP INDEX request_run_tickets")
+        schema_twenty_two(self.box.db)
         self.box.db.execute("PRAGMA user_version=14")
         with self.assertRaises(sqlite3.OperationalError):
             Outbox(self.path, self.box.endpoint, PRODUCER)

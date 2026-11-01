@@ -1,3 +1,4 @@
+from test_outbox_migration import schema_twenty_two
 from copy import deepcopy
 from pathlib import Path
 import tempfile
@@ -139,6 +140,7 @@ class DownloadOutboxTests(unittest.TestCase):
         self.box.db.execute("DROP TABLE IF EXISTS deleted_media")
         self.box.db.execute("DROP TABLE IF EXISTS worker_configurations")
         self.box.db.execute("DROP INDEX request_run_tickets")
+        schema_twenty_two(self.box.db)
         self.box.db.execute("PRAGMA user_version=15")
         self.box.close()
         self.box = self.open()

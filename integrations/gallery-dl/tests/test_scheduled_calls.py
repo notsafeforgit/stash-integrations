@@ -1,3 +1,5 @@
+from stash_ingest.outbox import SCHEMA
+from test_outbox_migration import schema_twenty_two
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -166,10 +168,11 @@ class SchedulingTests(unittest.TestCase):
         before = SourceCalls(self.box).summary(self.call)
         self.box.db.execute('DROP TABLE scheduled_calls')
         self.box.db.execute("DROP INDEX request_run_tickets")
+        schema_twenty_two(self.box.db)
         self.box.db.execute('PRAGMA user_version=19')
         self.box.close()
         self.box = self.open()
-        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 22)
+        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], SCHEMA)
         self.assertEqual(SourceCalls(self.box).summary(self.call), before)
 
     def test_real_http_503_response_is_retained_with_status_but_without_response_secrets(self):

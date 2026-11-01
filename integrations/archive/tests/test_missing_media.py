@@ -33,15 +33,16 @@ class MissingMediaArchiveTests(unittest.TestCase):
             self.assertEqual(missing_media.failed(box, {'service':'imgur','item':'Partial'}, 410)['attempts'], 3)
         self.assertFalse(path.with_name(path.name+'.missing-media.sqlite').exists())
 
-    def test_schema_eighteen_keeps_historical_report_and_future_twenty_one_is_rejected(self):
+    def test_schema_eighteen_keeps_historical_report_and_future_version_is_rejected(self):
         current = self.verify()
         del current['producers'][0]['missing_media']
         del current['producers'][0]['scheduled_calls']
+        del current['producers'][0]['counts']['retired']
         self.box.db.execute('DROP TABLE scheduled_calls')
         self.box.db.execute('DROP TABLE missing_media')
         self.box.db.execute('PRAGMA user_version=18')
         self.assertEqual(self.verify(), current)
-        self.box.db.execute('PRAGMA user_version=23')
+        self.box.db.execute('PRAGMA user_version=24')
         with self.assertRaisesRegex(InvalidArchive, 'Unsupported producer'):
             self.verify()
 

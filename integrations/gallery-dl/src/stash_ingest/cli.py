@@ -78,6 +78,12 @@ def main(argv=None):
     commands.add_parser("drain", help="Deliver one bounded batch of ready events")
     retry = commands.add_parser("retry", help="Retry a reviewed event with its original bytes")
     retry.add_argument("event_uuid")
+    retire = commands.add_parser('retire-profile', help='Retain an obsolete reviewed profile as retired; never acknowledge it')
+    retire.add_argument('event_uuid')
+    retire.add_argument('--sha256', required=True)
+    retire.add_argument('--superseding-revision', required=True, type=int)
+    retire.add_argument('--reason', required=True)
+    retire.add_argument('--apply', action='store_true', help='Commit the previewed local retirement')
     status = commands.add_parser("receipt-status", help="Fetch actual server work status")
     status.add_argument("event_uuid")
     request = commands.add_parser("queue-run", help="Durably coalesce a source request without starting a scrape")
@@ -163,8 +169,13 @@ def main(argv=None):
     box = None
     stage = "open_outbox"
     try:
-        box = Outbox(args.outbox, args.endpoint, args.producer)
+        box = Outbox(args.outbox, args.endpoint, args.producer, create=args.command != 'retire-profile')
         stage = "command"
+        if args.command == 'retire-profile':
+            from .profile_retirement import retire_profile
+            print(json.dumps(retire_profile(box, args.event_uuid, args.sha256,
+                args.superseding_revision, args.reason, apply=args.apply), sort_keys=True))
+            return 0
         if args.command == "retire-enrichment-progress":
             from .dispatch_retention import retire_enrichment_policies
             print(json.dumps(retire_enrichment_policies(box, args.retired_policy, apply=args.apply), sort_keys=True))

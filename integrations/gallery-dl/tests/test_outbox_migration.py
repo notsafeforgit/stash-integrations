@@ -15,7 +15,17 @@ from helpers import PRODUCER, capture, file_event, receipt
 from test_run_queue import request, admission
 
 
+def schema_twenty_two(db):
+    """Remove schema 23's ledger and event guards from populated older fixtures."""
+    for trigger in ('profile_retirement_scope', 'profile_retirement_no_update', 'profile_retirement_no_delete',
+                    'retired_profile_no_update', 'retired_profile_no_delete'):
+        db.execute('DROP TRIGGER IF EXISTS ' + trigger)
+    db.execute('DROP TABLE IF EXISTS profile_event_retirements')
+    db.execute('PRAGMA user_version=22')
+
+
 def schema_thirteen(db):
+    schema_twenty_two(db)
     db.execute("DROP INDEX request_run_tickets")
     db.execute("DROP TABLE IF EXISTS scheduled_calls")
     db.execute("DROP TABLE IF EXISTS missing_media")
@@ -131,6 +141,7 @@ class OutboxMigrationTests(unittest.TestCase):
             frozen = queue.claim(str(uuid.uuid4()))
             before = {table: [tuple(r) for r in box.db.execute('SELECT * FROM ' + table)]
                       for table in ('events', 'binding', 'run_intents', 'run_requests', 'run_intent_tickets', 'run_ticket_requests')}
+            schema_twenty_two(box.db)
             box.db.execute('DROP INDEX request_run_tickets')
             box.db.execute('PRAGMA user_version=20')
         original = Outbox._migrate

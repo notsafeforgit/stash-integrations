@@ -17,7 +17,7 @@ from .encoding import InvalidData, MAX_BATCH_BYTES, decode, digest, encode, iden
 from .endpoint import origin
 
 APPLICATION_ID = 0x5354494F  # STIO, not a Stash or gallery-dl archive database.
-SCHEMA = 22
+SCHEMA = 23
 
 
 def is_contention(error):
@@ -214,6 +214,9 @@ class Outbox:
             self.db.execute("CREATE INDEX request_run_tickets ON run_ticket_requests(request_uuid,ticket_uuid)")
         # Version 22 admits account.profile events. Older drainers must refuse
         # this queue rather than strand profile observations silently.
+        if version < 23:
+            from .profile_retirement import migrate
+            migrate(self.db)
         self.db.execute(f"PRAGMA user_version={SCHEMA}")
 
     def _migrate_dispatch(self):
@@ -418,9 +421,11 @@ class Outbox:
         identifier(event_uuid)
         with self.transaction():
             changed = self.db.execute("""UPDATE events SET state='pending',available_at=?,error_code=NULL
-                WHERE event_uuid=? AND state='review'""", (self.clock(), event_uuid)).rowcount
+                WHERE event_uuid=? AND state='review' AND NOT EXISTS(
+                    SELECT 1 FROM profile_event_retirements r WHERE r.event_uuid=events.event_uuid)""",
+                (self.clock(), event_uuid)).rowcount
             if changed != 1:
-                raise Conflict("Only an event requiring review can be explicitly retried")
+                raise Conflict("Only an unresolved event requiring review can be explicitly retried")
 
     def receipt(self, event_uuid):
         identifier(event_uuid)
@@ -430,9 +435,18 @@ class Outbox:
     def status(self):
         rows = self.db.execute("""SELECT state,count(*) AS count,coalesce(sum(length(body)),0) AS bytes,
             min(created_at) AS oldest, min(available_at) AS available FROM events GROUP BY state""").fetchall()
+        rows = [r for r in rows if r['state'] != 'review']
+        rows.append(self.db.execute("""SELECT 'review' AS state,count(*) AS count,
+            coalesce(sum(length(body)),0) AS bytes,min(created_at) AS oldest,min(available_at) AS available
+            FROM events e WHERE state='review' AND NOT EXISTS(
+                SELECT 1 FROM profile_event_retirements r WHERE r.event_uuid=e.event_uuid)""").fetchone())
+        retired, retired_bytes = self.db.execute('''SELECT count(*),coalesce(sum(length(e.body)),0)
+            FROM profile_event_retirements r JOIN events e ON e.event_uuid=r.event_uuid''').fetchone()
         states = {state: 0 for state in ("pending", "sending", "acknowledged", "review")}
-        outstanding = [r for r in rows if r["state"] != "acknowledged"]
+        states['retired'] = retired
+        outstanding = [r for r in rows if r["state"] != "acknowledged" and r['count']]
         states.update({r["state"]: r["count"] for r in rows})
         return {"counts": states, "queued_bytes": sum(r["bytes"] for r in outstanding),
+                "retired_bytes": retired_bytes,
                 "oldest_queued_seconds": max(0, self.clock() - min(r["oldest"] for r in outstanding)) if outstanding else None,
                 "next_attempt_at": min((r["available"] for r in rows if r["state"] == "pending"), default=None)}

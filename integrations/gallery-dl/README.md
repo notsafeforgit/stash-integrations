@@ -1187,6 +1187,7 @@ is no command-line token argument.
 | `retry-call UUID` | Retries reviewed targets without changing bound sources or the frozen window |
 | `drain` | Attempts one ready batch of at most eight events; exits 2 while local event work remains |
 | `retry EVENT_UUID` | Requeues one explicitly reviewed event with its original contents |
+| `retire-profile EVENT_UUID --sha256 HASH --superseding-revision N --reason TEXT [--apply]` | Previews or records an explicit local retirement of an obsolete, HTTP-409-rejected profile report; retains the original event and does not acknowledge it |
 | `receipt-status EVENT_UUID` | Reads actual server ingestion/worker status |
 | `queue-run --collection UUID --revision N --profile FILE --until TIME [--retrieval-url URL]` | Records/coalesces a download request using the profile digest; low-level callers may use `--policy SHA256` instead |
 | `submit-runs` | Submits one ready request; exits 2 while requests remain pending, in flight or in review |
@@ -1204,6 +1205,24 @@ file processor leaves new file events pending while previously committed
 receipts remain recoverable. `queue-run` succeeding means the request was recorded
 locally; `submit-runs` succeeding means requests were admitted by Stash. Neither
 command claims a completed scrape or starts a downloader.
+
+`retire-profile` is for an operator-reviewed collection revision that cannot
+accept a retained `account.profile` report. Verify the newer collection definition
+before using it; the command is local and does not infer that review from a 409.
+It requires the exact original event digest, a newer revision and a review reason.
+Only held profile reports qualify: pending/in-flight work, captures, files,
+attachment reports and events with dependents are rejected. Preview is the default;
+`--apply` commits the immutable decision and repeat application is idempotent.
+No receipt is fabricated, and the original bytes, revision, attempt and error
+remain unchanged. Status separates `retired` and `retired_bytes` from actionable
+review/queued counts. Retained reports still count against storage capacity, and
+`retry` cannot reactivate them. No download, source cursor or coverage changes.
+
+This adds producer schema 23 through a small ledger, without copying the events
+table. Upgrade archive verification and all writers sharing the outbox before
+opening it with the new producer. Older producers reject schema 23. Archive
+verification checks the original payload and retirement decision and includes
+both in its receipt-boundary digest; retirement is distinct from acceptance.
 
 Reddit subscriptions use one canonical profile URL, not one collection per
 new/top/search pass. The n8n source-management flow registers this profile once.

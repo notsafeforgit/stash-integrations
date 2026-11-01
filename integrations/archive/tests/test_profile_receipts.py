@@ -4,6 +4,7 @@ import uuid
 
 from stash_ingest.encoding import encode
 from stash_ingest.retention import POLICY
+from stash_ingest.profile_retirement import retire_profile
 from stash_archive.storage import InvalidArchive
 from test_receipts import ReceiptFixture, PRODUCER, CREDENTIAL
 
@@ -64,4 +65,24 @@ class ProfileReceiptTests(ReceiptFixture):
         self.db.execute("UPDATE source_account_profiles SET source='{}'")
         self.db.commit()
         with self.assertRaisesRegex(InvalidArchive, 'differs from native history'):
+            self.verify()
+
+    def test_retirement_preserves_payload_and_is_not_an_acknowledgement(self):
+        event = self.profile(accepted=False)
+        delivery, = self.box.claim(str(uuid.uuid4()))
+        self.box.fail(delivery, 'event_rejected_409', review=True)
+        retire_profile(self.box, event['event_uuid'], delivery.sha256, event['collection_revision'] + 1,
+                       'Reviewed obsolete manual collection definition; keep the exact original profile.', apply=True)
+        report = self.verify()['producers'][0]
+        self.assertEqual(report['events'], 1)
+        self.assertEqual((report['counts']['retired'], report['counts']['review'], report['counts']['acknowledged']), (1, 0, 0))
+        self.assertEqual(self.box.db.execute('SELECT body FROM events').fetchone()[0], encode(event))
+        self.box.db.execute('PRAGMA user_version=22')
+        with self.assertRaisesRegex(InvalidArchive, 'omit retired profile'):
+            self.verify()
+        self.box.db.execute('PRAGMA user_version=23')
+        # An invalid ledger cannot hide media, changed bytes or a missing report.
+        self.box.db.execute('DROP TRIGGER profile_retirement_no_update')
+        self.box.db.execute("UPDATE profile_event_retirements SET sha256=?", ('a' * 64,))
+        with self.assertRaisesRegex(InvalidArchive, 'retired profile'):
             self.verify()

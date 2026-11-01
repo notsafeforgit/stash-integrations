@@ -146,7 +146,7 @@ class ReceiptBoundaryTests(ReceiptFixture):
         report = self.verify()
         self.assertEqual(report["coverage"], "capture-file-download-run-and-job-receipts")
         self.assertEqual(report["producers"][0]["counts"], {"acknowledged": 1, "pending": 2, "sending": 0,
-                                                         "review": 0, "accepted_unacknowledged": 1})
+                                                         "review": 0, "retired": 0, "accepted_unacknowledged": 1})
         self.assertEqual(report, self.verify())
         self.assertEqual(before, self.box.db.execute("SELECT * FROM events ORDER BY seq").fetchall())
 
@@ -206,7 +206,7 @@ class ReceiptBoundaryTests(ReceiptFixture):
         with self.assertRaisesRegex(InvalidArchive, "identity is missing"): self.verify()
 
     def test_future_outbox_version_and_writable_transaction_refused(self):
-        self.box.db.execute("PRAGMA user_version=23")
+        self.box.db.execute("PRAGMA user_version=24")
         with self.assertRaisesRegex(InvalidArchive, "Unsupported producer"): self.verify()
         self.db.execute("BEGIN")
         try:
@@ -247,7 +247,7 @@ class ReceiptBoundaryTests(ReceiptFixture):
         self.box.fail(deliveries[1], "conflicting_receipt", review=True)
         before = self.box.db.execute("SELECT * FROM events ORDER BY seq").fetchall()
         counts = self.verify()["producers"][0]["counts"]
-        self.assertEqual(counts, {"acknowledged":0,"pending":1,"sending":1,"review":1,"accepted_unacknowledged":0})
+        self.assertEqual(counts, {"acknowledged":0,"pending":1,"sending":1,"review":1,"retired":0,"accepted_unacknowledged":0})
         self.assertEqual(before, self.box.db.execute("SELECT * FROM events ORDER BY seq").fetchall())
 
     def test_cli_proof_is_bound_to_verified_archive_components(self):

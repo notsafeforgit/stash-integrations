@@ -124,7 +124,7 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
     reports, producers = [], set()
     for queue in outboxes:
         if (queue.execute("PRAGMA application_id").fetchone()[0] != 0x5354494F
-                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 23)):
+                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 24)):
             raise InvalidArchive("Unsupported producer snapshot for receipt verification")
         binding = queue.execute("SELECT endpoint,producer FROM binding").fetchall()
         if len(binding) != 1 or origin(binding[0][0]) != expected_origin:
@@ -136,6 +136,14 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
         if library.execute("SELECT uuid FROM ingest_producers WHERE uuid=?", (producer,)).fetchall() != [(producer,)]:
             raise InvalidArchive("Producer identity is missing from the native snapshot")
         counts = {name: 0 for name in ("acknowledged", "pending", "sending", "review", "accepted_unacknowledged")}
+        retirement_ledger = queue.execute('PRAGMA user_version').fetchone()[0] >= 23
+        if (not retirement_ledger and queue.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='profile_event_retirements'").fetchone()
+                and queue.execute('SELECT 1 FROM profile_event_retirements LIMIT 1').fetchone()):
+            raise InvalidArchive('Producer schema version would omit retired profile decisions')
+        if retirement_ledger:
+            counts['retired'] = 0
+            from .profile_retirements import validate_retirements, retirement_for
+            validate_retirements(queue)
         digest, maximum_sequence = hashlib.sha256(), 0
         query = """SELECT seq,event_uuid,sha256,kind,collection_uuid,collection_revision,root_uuid,run_uuid,parent_uuid,state,
             length(body) AS body_length,length(receipt) AS receipt_length,
@@ -198,15 +206,20 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
             elif row['kind'] == 'account.profile':
                 from .profile_receipts import verify_profile_observation
                 verify_profile_observation(library, queue, producer, row, event, server)
-            counts[row["state"]] += 1
-            digest.update(json_bytes(dict(evidence, seq=row["seq"], event_uuid=row["event_uuid"], state=row["state"])))
+            state = row['state']
+            retirement = retirement_for(queue, row) if retirement_ledger else None
+            if retirement is not None:
+                state = 'retired'
+                evidence['retirement'] = retirement
+            counts[state] += 1
+            digest.update(json_bytes(dict(evidence, seq=row["seq"], event_uuid=row["event_uuid"], state=state)))
         from .run_receipts import verify_run_admissions
         from .job_receipts import verify_job_journals
         admissions = verify_run_admissions(library, queue, producer, queue.execute("PRAGMA user_version").fetchone()[0])
         journals = verify_job_journals(library, queue, producer, queue.execute("PRAGMA user_version").fetchone()[0])
         from .missing_media import verify_missing_media
         missing_media = verify_missing_media(queue, queue.execute("PRAGMA user_version").fetchone()[0])
-        reports.append({"producer_uuid": producer, "events": sum(counts[k] for k in ("acknowledged", "pending", "sending", "review")),
+        reports.append({"producer_uuid": producer, "events": sum(counts.get(k, 0) for k in ("acknowledged", "pending", "sending", "review", "retired")),
                         "maximum_sequence": maximum_sequence, "counts": counts, "boundary_sha256": digest.hexdigest(),
                         "source_admissions": admissions, "job_journals": journals})
         from .scheduled_calls import verify_scheduled_calls
@@ -238,7 +251,7 @@ def verify_snapshot_producers(database, outboxes, expected_origin):
     for path in outboxes:
         with closing(connect_readonly(Path(path))) as queue:
             metadata = database_metadata(queue, "producer_outbox", verification="capture")
-            if metadata["user_version"] not in range(1, 23):
+            if metadata["user_version"] not in range(1, 24):
                 raise InvalidArchive("Unsupported producer snapshot for identity verification")
             if origin(metadata["endpoint"]) != expected_origin:
                 raise InvalidArchive("Producer snapshot belongs to another origin")
