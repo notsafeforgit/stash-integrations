@@ -1,8 +1,10 @@
 import copy
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from stash_ingest import redgifs_history
+from stash_ingest.client import Unavailable
 from stash_ingest.encoding import InvalidData
 from stash_ingest.runs import SourceFailure
 
@@ -136,3 +138,37 @@ class RedgifsHistoryTests(unittest.TestCase):
         self.target.url = URL + '?order=best'
         with self.assertRaises(InvalidData):
             self.install()
+
+
+class InitialHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.run = {'collection_uuid': 'collection', 'collection_revision': 2,
+                    'root_uuid': 'root', 'root_revision': 3, 'target_url': URL}
+        self.previous = {**self.run, 'sequence': 1, 'state': 'succeeded', 'operation': 'download',
+                         'completed': [{'since': None, 'until': '2026-11-03T00:00:00Z'}]}
+        self.client = Mock()
+
+    def mode(self, rows):
+        self.client._request.return_value = rows
+        return redgifs_history.scan_mode(self.client, self.run)
+
+    def test_new_or_unfinished_accounts_require_initial_history(self):
+        self.assertEqual(self.mode([]), 'initial')
+        for change in ({'state': 'running'}, {'state': 'deferred'}, {'state': 'cancelled'},
+                       {'completed': []}, {'operation': 'enrich'}, {'retrieval_url': URL + '?type=i'},
+                       {'completed': [{'since': '2026-11-01T00:00:00Z', 'until': '2026-11-03T00:00:00Z'}]},
+                       {'completed': [{'since': None, 'until': '2026-11-03T00:00:00Z', 'basis': 'traversal'}]},
+                       {'collection_revision': 1}, {'root_revision': 2}, {'target_url': URL + 'other'}):
+            with self.subTest(change=change):
+                self.assertEqual(self.mode([{**self.previous, **change}]), 'initial')
+        self.assertEqual(self.mode([self.previous]), 'routine')
+
+    def test_history_lookup_paginates_and_rejects_ambiguous_results(self):
+        page = [{**self.previous, 'sequence': i + 1, 'state': 'cancelled'} for i in range(50)]
+        self.client._request.side_effect = [page, [{**self.previous, 'sequence': 51}]]
+        self.assertEqual(redgifs_history.scan_mode(self.client, self.run), 'routine')
+        self.assertIn(b'"after":50', self.client._request.call_args.args[2])
+        self.client._request.side_effect = None
+        for invalid in (None, {}, [self.previous, self.previous], [{**self.previous, 'completed': None}]):
+            with self.subTest(invalid=invalid), self.assertRaises(Unavailable):
+                self.mode(invalid)

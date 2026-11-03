@@ -161,9 +161,16 @@ def execute(box, client, configuration, run_uuid):
                 configuration.check()
                 delivery.check()
 
+            scan_mode = configuration.scan_mode
+            if scan_mode == 'routine' and configuration.source_category == 'redgifs':
+                from .redgifs_history import scan_mode as redgifs_scan_mode
+                try:
+                    scan_mode = redgifs_scan_mode(client, lease.run)
+                except Unavailable:
+                    raise SourcePaused('Cannot verify the initial Redgifs history baseline') from None
             producer = Producer(box, lease, configuration.root, extractor_version=version.__version__,
                                 configuration_check=check_configuration, source_category=configuration.source_category,
-                                scan_mode=configuration.scan_mode, attachment_retries=configuration.source_category == 'reddit')
+                                scan_mode=scan_mode, attachment_retries=configuration.source_category == 'reddit')
             from .post_archive import retry_archive
             from .publication_lock import publication_lock
             with publication_lock(configuration.locks.path, producer.check):

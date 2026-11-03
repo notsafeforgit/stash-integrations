@@ -10,11 +10,51 @@ turns rate limits, missing accounts or malformed responses into completion.
 import json
 from urllib.parse import urlsplit
 
-from .encoding import InvalidData
+from .client import Unavailable
+from .encoding import InvalidData, encode as encode_request
 from .runs import SourceFailure
 
 PREFIX = 'redgifs-history-v1:'
 FIELDS = {'phase', 'page', 'limit', 'images', 'videos'}
+
+
+def scan_mode(client, run):
+    """A new account needs history even when admitted by a routine scheduler.
+
+    Files previously embedded in Reddit are not an initial-account baseline.
+    Only successful native coverage for this exact collection/root can allow
+    the archive boundary to stop a routine Redgifs pass.
+    """
+    after = 0
+    for _ in range(200):
+        page = client._request('POST', '/runs/list',
+                               encode_request({'collection_uuid': run['collection_uuid'], 'after': after}),
+                               max_response_bytes=4 << 20)
+        if not isinstance(page, list) or len(page) > 50:
+            raise Unavailable('invalid_source_history')
+        for previous in page:
+            if (not isinstance(previous, dict) or type(previous.get('sequence')) is not int
+                    or previous['sequence'] <= after):
+                raise Unavailable('invalid_source_history')
+            after = previous['sequence']
+        for previous in page:
+            if (previous.get('state') != 'succeeded' or previous.get('operation') != 'download'
+                    or previous.get('collection_uuid') != run['collection_uuid']
+                    or previous.get('collection_revision') != run['collection_revision']
+                    or previous.get('root_uuid') != run['root_uuid']
+                    or previous.get('root_revision') != run.get('root_revision')
+                    or previous.get('target_url') != run['target_url']
+                    or previous.get('retrieval_url') or previous.get('attachment_retry')):
+                continue
+            completed = previous.get('completed')
+            if not isinstance(completed, list):
+                raise Unavailable('invalid_source_history')
+            if any(isinstance(window, dict) and 'since' in window and window['since'] is None
+                   and isinstance(window.get('until'), str) and not window.get('basis') for window in completed):
+                return 'routine'
+        if len(page) < 50:
+            return 'initial'
+    raise Unavailable('source_history_page_limit')
 
 
 def decode(cursor):

@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v5",
-  "implementation_sha256": "5bea9a5ea17f054e277a6d2a2f91d9ae807fa522aa31e6ff4cb1e64ee61d5f17",
+  "execution_contract": "stash-worker-execution-v6",
+  "implementation_sha256": "30291711032f93beca30aa6c36c00eca841742c010952a178cf81e3fd71c9340",
   "decision": "contract-change",
-  "reason": "Execution v5 adds explicitly opted-in available-history Redgifs traversal: after a confirmed provider page ceiling, try image/video and oldest-first feeds, preserve filtered page progress, and accept any remaining inaccessible middle only under the reviewed profile. Routine Redgifs checks stop at whole downloaded posts, including every gallery member. Existing v4 admissions require explicit policy upgrades; keep unfinished initial crawls initial and select a separate routine profile for future checks. All retries, shared pacing, producer identities, archive files, outboxes and schema 25 remain intact. Deploy shared writers together while quiesced with no active backup capture."
+  "reason": "Execution v6 preserves the v5 opt-in bounded Redgifs feeds and adds initial-history protection for future routine jobs. A routine Redgifs admission completes an initial pass until native successful full-history coverage exists for the same collection and root. Embedded downloaded files alone never establish coverage. Explicitly upgrade retained policies, keep current initial crawls initial, and select the routine profile for future scheduling. No producer identity, source window, pending delivery, archive, path or schema 25 change. Deploy every writer together with no active backup capture."
 }
