@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "a40bfb62dff96acbb83c8a25759f2c3c4b32832a5cb01f5205097123443153e6",
+  "implementation_sha256": "aa9358c4bbcdcbb237f02268bd2f4cd3b4330da2bf429db8fbbc2293c9c5f782",
   "decision": "compatible",
-  "reason": "Add explicit, digest-guarded retirement of obsolete HTTP-409-rejected account profile reports. The schema-23 ledger retains original immutable events and distinguishes local retirement from server acknowledgement. Upgrade all shared outbox writers and archive verification together. Download execution, capture bytes, policies, windows, coverage, cursors, identities and receipt semantics are unchanged."
+  "reason": "Schema 24 retires only fully acknowledged source runs that are terminal in Stash and whose complete receipt digests match the native library. Keep unfinished runs, original pending bytes, producer identities, local review decisions, and a monotonic event sequence. Exact retired replays resolve immutable server receipts outside SQLite transactions. Upgrade all outbox writers and archive readers together before migration. Download archives, policies, capture bytes, execution, windows, and coverage are unchanged."
 }

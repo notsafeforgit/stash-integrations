@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stash-ingest"
-version = "0.6.18"
+version = "0.6.19"
 description = "Durable gallery-dl producer for the native Stash ingestion API"
 requires-python = ">=3.12"
 
@@ -20,6 +20,7 @@ stash-ingest = "stash_ingest_bootstrap:main"
 stash-gallery-dl = "stash_ingest.manual:main"
 stash-ingest-config = "stash_ingest.config_migration:main"
 stash-ingest-storage = "stash_ingest.storage:main"
+stash-outbox-retention = "stash_ingest.outbox_history:main"
 stash-ingest-twitter = "stash_ingest.launchers:twitter_main"
 stash-ingest-reddit = "stash_ingest.launchers:reddit_main"
 stash-ingest-redgifs = "stash_ingest.launchers:redgifs_main"

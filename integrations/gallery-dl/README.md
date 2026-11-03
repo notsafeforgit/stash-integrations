@@ -287,6 +287,27 @@ outbox database, distinguish album IDs from image IDs and survive interruption.
 A missing album does not invent an attachment, download receipt or successful
 archive entry. Authorization, throttling and transport failures remain retryable.
 
+Schema 24 adds explicit retention of completed delivery history. Upgrade every
+writer sharing an outbox and all archive readers before opening it with this
+version. `stash-outbox-retention --outbox PATH --library NATIVE_SQLITE --endpoint
+ORIGIN` previews retirement; add `--apply` after inspecting its report. The library
+is opened read-only. Run this on the host against its matching native library,
+under the deployment's backup/maintenance exclusion. The default `--keep-days 1`
+keeps a day of recently completed history. It also keeps every event of queued,
+running, deferred, unknown, or unresolved runs, including review decisions.
+
+Retirement requires a succeeded or cancelled native source run and an exact
+match of all acknowledged receipts, their counts, and their canonical digest.
+A compact immutable proof remains for each retired run. Short transactions
+delete child events before parents, and a persistent sequence high-water mark
+prevents transfer-sequence reuse after the queue is emptied or compacted. An
+interrupted deletion resumes from its verified proof. Re-enqueuing an old event
+uses its native receipt and exact payload digest; it cannot recreate retired
+history or add new events to the terminal run. These exceptional receipt lookups
+require the producer's normal API credential and run outside write transactions.
+Gallery-dl download archives are unaffected. SQLite compaction is a separate
+maintenance operation; stop shared writers and respect the host disk reserve.
+
 After synchronous postprocessing, the adapter flushes and hashes the actual
 final file, then queues its dependent file event and downloaded report before updating gallery-dl's
 archive. Metadata writes use atomic replacement. Failed processors, queue

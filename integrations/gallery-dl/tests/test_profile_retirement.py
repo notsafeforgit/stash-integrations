@@ -116,12 +116,11 @@ class ProfileRetirementTests(unittest.TestCase):
         delivery, = self.claim()
         self.box.fail(delivery, 'event_rejected_409', review=True)
         before = tuple(self.box.db.execute('SELECT * FROM events').fetchone())
-        for row in self.box.db.execute("SELECT name FROM sqlite_schema WHERE type='trigger' AND (name LIKE 'profile_retirement_%' OR name LIKE 'retired_profile_%')").fetchall():
-            self.box.db.execute('DROP TRIGGER ' + row[0])
-        self.box.db.execute('DROP TABLE profile_event_retirements')
-        self.box.db.execute('PRAGMA user_version=22')
+        from test_outbox_migration import schema_twenty_two
+        schema_twenty_two(self.box.db)
         self.box.close()
         self.box = self.open()
         self.assertEqual(tuple(self.box.db.execute('SELECT * FROM events').fetchone()), before)
-        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 23)
+        from stash_ingest.outbox import SCHEMA
+        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], SCHEMA)
         self.retire(event, body, apply=True)

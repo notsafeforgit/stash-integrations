@@ -124,7 +124,7 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
     reports, producers = [], set()
     for queue in outboxes:
         if (queue.execute("PRAGMA application_id").fetchone()[0] != 0x5354494F
-                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 24)):
+                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 25)):
             raise InvalidArchive("Unsupported producer snapshot for receipt verification")
         binding = queue.execute("SELECT endpoint,producer FROM binding").fetchall()
         if len(binding) != 1 or origin(binding[0][0]) != expected_origin:
@@ -222,6 +222,11 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
         reports.append({"producer_uuid": producer, "events": sum(counts.get(k, 0) for k in ("acknowledged", "pending", "sending", "review", "retired")),
                         "maximum_sequence": maximum_sequence, "counts": counts, "boundary_sha256": digest.hexdigest(),
                         "source_admissions": admissions, "job_journals": journals})
+        if queue.execute("PRAGMA user_version").fetchone()[0] >= 24:
+            from .outbox_history import verify_retired_runs
+            retired_runs = verify_retired_runs(library, queue, producer)
+            if retired_runs["runs"]:
+                reports[-1]["retired_source_runs"] = retired_runs
         from .scheduled_calls import verify_scheduled_calls
         schedules = verify_scheduled_calls(queue, queue.execute('PRAGMA user_version').fetchone()[0])
         if schedules is not None:
@@ -251,8 +256,11 @@ def verify_snapshot_producers(database, outboxes, expected_origin):
     for path in outboxes:
         with closing(connect_readonly(Path(path))) as queue:
             metadata = database_metadata(queue, "producer_outbox", verification="capture")
-            if metadata["user_version"] not in range(1, 24):
+            if metadata["user_version"] not in range(1, 25):
                 raise InvalidArchive("Unsupported producer snapshot for identity verification")
+            if metadata["user_version"] >= 24:
+                from .outbox_history import validate_history_state
+                validate_history_state(queue)
             if origin(metadata["endpoint"]) != expected_origin:
                 raise InvalidArchive("Producer snapshot belongs to another origin")
             producer = identifier(metadata["producer_uuid"])
