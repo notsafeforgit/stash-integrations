@@ -1,10 +1,11 @@
-"""Finish explicitly reviewed Redgifs history after exhausting supported feeds.
+"""Finish Redgifs history only when the checked feeds cover its reported range.
 
 The ordinary listing is tried first. A confirmed page ceiling opens separate
 image/video feeds, each from both ends when needed. Cursor state carries the
 remaining traversal and any inaccessible middle range across worker restarts.
-The opt-in profile defines success as all provider-accessible history; it never
-turns rate limits, missing accounts or malformed responses into completion.
+An inaccessible middle range remains unresolved: a page ceiling alone does not
+prove that no other supported listing can expose it. Rate limits, missing
+accounts and inconsistent responses likewise never establish completion.
 """
 
 import json
@@ -123,6 +124,12 @@ def install(target, producer, resume):
             if (not isinstance(data, dict) or type(data.get('pages')) is not int
                     or not 0 <= data['pages'] <= 1000000 or not isinstance(data.get('gifs'), list)):
                 raise InvalidData('Invalid Redgifs history listing')
+            empty_account = page == 1 and type(data.get('total')) is int and data['total'] == 0
+            if ((data['pages'] == 0 and data['gifs'])
+                    or (page <= data['pages'] and not data['gifs'] and not empty_account)
+                    or len(data['gifs']) > target.per_page
+                    or ('page' in data and (type(data['page']) is not int or data['page'] != page))):
+                raise InvalidData('Inconsistent Redgifs history listing cannot establish coverage')
             if phase:
                 state[key] = max(state[key], data['pages'])
             yield from data['gifs']
@@ -134,9 +141,8 @@ def install(target, producer, resume):
                 state.update(phase=phase + 1, page=1)
             else:
                 state['page'] += 1
-        # Keep the coverage note in the existing native page checkpoint, not
-        # just the process log. A lost finish response can replay this terminal
-        # marker without requesting inaccessible history again.
+        # Keep the checked range in the existing checkpoint. A replay of an
+        # unresolved middle remains unresolved, even after a worker restart.
         producer.begin_page({'extractor': 'redgifs:user', 'url': target.url,
                              'cursor': original_cursor or encode(state), 'item': ''})
         producer.redgifs_history_coverage = {
@@ -144,5 +150,7 @@ def install(target, producer, resume):
             'image_pages': state['images'], 'video_pages': state['videos'],
             'limited_types': [key for key in ('images', 'videos') if state[key] > state['limit'] * 2],
         }
+        if producer.redgifs_history_coverage['limited_types']:
+            producer.fail_source('source_history_limit', 'service:redgifs', page_limit=state['limit'])
 
     target.gifs = gifs

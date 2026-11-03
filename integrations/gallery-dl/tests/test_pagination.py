@@ -73,7 +73,7 @@ class PaginationTests(unittest.TestCase):
             calls.append(dict(params))
             if params['page'] == 101:
                 producer.fail_source('source_history_limit', 'service:redgifs', page_limit=100)
-            return {'gifs': [], 'pages': 1}
+            return {'gifs': [], 'pages': 1, 'total': 0}
         target.api._call = call
         pagination.install(target, producer)
         self.assertEqual(list(target.gifs()), [])
