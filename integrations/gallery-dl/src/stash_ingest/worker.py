@@ -117,6 +117,10 @@ def execute(box, client, configuration, run_uuid):
             or 'account.profile' not in capabilities.get('kinds', [])
             or capabilities.get('max_account_profile_bytes', 0) < 128 << 10):
         raise InvalidData('Reddit profile observations require an updated Stash server')
+    if configuration.source_category == 'reddit' and capabilities.get('source_run_attachment_retry_protocol') != 1:
+        raise Unavailable('native_attachment_retry_unavailable')
+    if configuration.source_category == 'redgifs' and capabilities.get('source_run_redgifs_pagination_protocol') != 1:
+        raise Unavailable('native_redgifs_pagination_unavailable')
     if configuration.source_mode == 'traversal' and capabilities.get('source_run_traversal_protocol') != 1:
         raise Unavailable('native_source_traversal_unavailable')
     current = client._request("GET", "/runs/" + run_uuid)
@@ -149,7 +153,7 @@ def execute(box, client, configuration, run_uuid):
 
             producer = Producer(box, lease, configuration.root, extractor_version=version.__version__,
                                 configuration_check=check_configuration, source_category=configuration.source_category,
-                                scan_mode=configuration.scan_mode)
+                                scan_mode=configuration.scan_mode, attachment_retries=configuration.source_category == 'reddit')
             target = lease.run["target_url"]
             if configuration.source_adapter == 'yt-dlp':
                 from gallery_dl.extractor.ytdl import YoutubeDLExtractor
@@ -167,8 +171,9 @@ def execute(box, client, configuration, run_uuid):
             outcome, error = "retry", "source_turn_complete"
         except SourceFailure as exc:
             # Missing/private accounts can return or grant access later. The
-            # server schedules these checks daily without a terminal retry cap.
-            outcome = "deferred" if exc.code in {"authentication", "challenge"} else "retry"
+            # server checks missing profiles monthly and private profiles daily.
+            # A provider's history limit needs review, not a false completion.
+            outcome = "deferred" if exc.code in {"authentication", "challenge", "source_history_limit"} else "retry"
             error, error_scope = exc.code, exc.scope
         except SourcePaused:
             result = {"state": "paused", "run_uuid": run_uuid, "error_code": "source_ownership_unavailable"}

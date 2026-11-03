@@ -45,11 +45,24 @@ class RunQueueTests(unittest.TestCase):
         self.queue = RunQueue(self.box)
         self.client = SimpleNamespace(endpoint=self.box.endpoint, producer=PRODUCER,
             capabilities=Mock(return_value={"source_runs": True, "source_run_protocol": 1,
-                                            "source_run_submission_receipts": True}),
+                                            "source_run_submission_receipts": True,
+                                            "source_run_compatible_admission_protocol": 1}),
             _request=Mock(side_effect=lambda method, route, body: admission(body)))
 
     def open(self):
         return Outbox(self.path, "http://fixture.invalid", PRODUCER, clock=lambda: self.now[0])
+
+    def test_compatible_admission_keeps_original_policy_and_requires_reviewed_execution_policy(self):
+        self.queue.enqueue(request())
+        delivery = self.claim()
+        self.assertTrue(decode(delivery.body)['reuse_compatible_policy'])
+        with self.assertRaises(InvalidData):
+            self.queue.admit(delivery, admission(delivery.body, policy_sha256='b' * 64,
+                                                 execution_policy_sha256='c' * 64))
+        receipt = admission(delivery.body, policy_sha256='b' * 64, execution_policy_sha256='a' * 64)
+        self.queue.admit(delivery, receipt)
+        saved = self.box.db.execute('SELECT receipt FROM run_requests WHERE request_uuid=?', (delivery.request_uuid,)).fetchone()[0]
+        self.assertEqual(decode(saved)['policy_sha256'], 'b' * 64)
 
     def claim(self):
         return self.queue.claim(str(uuid.uuid4()))
@@ -307,6 +320,7 @@ class RunQueueTests(unittest.TestCase):
         self.assertEqual(first["error_code"], "incompatible_source_runs")
         self.client._request.assert_not_called()
         self.client.capabilities.return_value["source_run_submission_receipts"] = True
+        self.client.capabilities.return_value['source_run_compatible_admission_protocol'] = 1
         self.now[0] += 5
         self.client._request.side_effect = Unavailable("stash_token_rejected", 401)
         second = submit_once(self.queue, self.client)

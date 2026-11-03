@@ -76,7 +76,7 @@ def main():
             drain_once(box, client)
             if box.status()['counts']['acknowledged'] == 4:
                 break
-        assert box.status()['counts'] == {'acknowledged': 4, 'pending': 0, 'sending': 0, 'review': 0}, box.status()
+        assert box.status()['counts'] == {'acknowledged': 4, 'pending': 0, 'sending': 0, 'review': 0, 'retired': 0}, box.status()
         rows = list(box.db.execute('SELECT event_uuid,kind FROM events ORDER BY seq'))
         assert [row[1] for row in rows] == ['source.capture', 'attachment.download', 'file.completed', 'attachment.download'], rows
         capture_id, started_id, file_id, downloaded_id = [row[0] for row in rows]

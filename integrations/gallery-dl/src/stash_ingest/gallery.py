@@ -4,6 +4,7 @@ import collections
 import copy
 import functools
 import os
+import re
 import sqlite3
 from pathlib import Path
 import tempfile
@@ -60,6 +61,23 @@ class SourceSession:
             self.producer.report_source(permit)
             self.producer.fail_source("extraction_failed", scope)
         self.producer.report_source(permit, response)
+        if scope == 'service:redgifs' and response.status_code in (400, 404, 410):
+            from urllib.parse import urlsplit
+            parsed = urlsplit(url)
+            if parsed.hostname == 'api.redgifs.com' and parsed.path.startswith('/v2/users/') and parsed.path.endswith('/search'):
+                try:
+                    error = response.json()
+                except (ValueError, TypeError):
+                    error = None
+                if isinstance(error, dict):
+                    messages = [item[key] for item in (error, error.get('error')) if isinstance(item, dict)
+                                for key in ('message', 'description') if isinstance(item.get(key), str)]
+                    if 'User account deleted.' in messages:
+                        response.close()
+                        self.producer.fail_source('not_found', scope)
+                    if any(re.fullmatch(r'Page number must be between 1 and [1-9][0-9]*', value) for value in messages):
+                        response.close()
+                        self.producer.fail_source('source_history_limit', scope)
         from .request_budget import network_security
         if response.status_code == 429 or network_security(response, scope):
             response.close()
@@ -315,6 +333,11 @@ class NativeDownloadJob(job.DownloadJob):
                 raise self.producer.source_failure
             if self.producer.publication_failure is not None:
                 raise self.producer.publication_failure
+            if (result == 4 and getattr(self, '_native_delegated_failures', 0)
+                    and not self.producer.unhandled_download_failure and not self.producer.failure_code):
+                result = 0
+            elif result == 4:
+                self.producer.unhandled_download_failure = True
             if self._native_parent is None and not result:
                 self.producer.traversed()
             return result
@@ -349,6 +372,9 @@ class NativeDownloadJob(job.DownloadJob):
             from . import pagination
             pagination.install(self.extractor, self.producer)
             recent.install(self.extractor, self.producer)
+        elif self.extractor.category == 'redgifs' and self._native_parent is None:
+            from . import pagination
+            pagination.install(self.extractor, self.producer)
 
     def _source_operation(self, call, *args):
         try:
@@ -641,6 +667,7 @@ class NativeDownloadJob(job.DownloadJob):
 
     def _prepare(self, pathfmt):
         self._release()
+        self.producer.wait_for_outbox()
         pathfmt.kwdict.pop("_meta_path", None)
         filename.install(self).begin(pathfmt.kwdict)
         kept = dict(pathfmt.kwdict, _url=self._native_url, source_extractor_url=source_url(self.extractor))
@@ -693,7 +720,14 @@ class NativeDownloadJob(job.DownloadJob):
         self.producer.routine_post_new = True
         if self._native_prepared is None:
             raise InvalidData("Failed download has no durable source capture")
-        self.producer.report_download(self._native_prepared, "failed", reason_code="download_failed")
+        event = self.producer.report_download(self._native_prepared, "failed", reason_code="download_failed")
+        delegated = (self._native_parent is None and self.extractor.category == 'reddit'
+                     and self.producer.retry_missing_file(self._native_prepared, event))
+        if delegated:
+            self._native_delegated_failures = getattr(self, '_native_delegated_failures', 0) + 1
+            self.producer.checkpoint(self._native_cursor, self._native_replay, False)
+        else:
+            self.producer.unhandled_download_failure = True
         self._native_phase = None
         self._release()
 

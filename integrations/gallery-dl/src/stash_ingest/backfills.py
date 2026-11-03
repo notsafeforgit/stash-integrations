@@ -140,6 +140,11 @@ def completion_proof(box, backfill_uuid, source_uuid, spec):
                 raise InvalidData("Backfill proof requires admitted original requests")
             request = {**requested, "request_uuid": assignment["request_uuid"], "window": assignment["request_window"]}
             stored = box.db.execute("SELECT sha256 FROM run_requests WHERE request_uuid=?", (assignment["request_uuid"],)).fetchone()
+            if stored is not None and digest(encode(request, 8192)) != stored[0]:
+                # New admissions opt into reviewed compatible policies. Preserve
+                # that exact input in the proof; older queued receipts retain
+                # their original bytes and digest without the optional field.
+                request = {**request, 'reuse_compatible_policy': True}
             if stored is None or digest(encode(request, 8192)) != stored[0]:
                 raise InvalidData("Backfill request differs from its original digest")
             requests[assignment["request_uuid"]] = request

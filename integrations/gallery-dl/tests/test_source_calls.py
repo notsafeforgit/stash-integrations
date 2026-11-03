@@ -236,6 +236,7 @@ class SourceCallTests(unittest.TestCase):
         self.record(2)
         limited = RunQueue(self.box, max_groups=1)
         self.client.capabilities.return_value["source_run_submission_receipts"] = True
+        self.client.capabilities.return_value['source_run_compatible_admission_protocol'] = 1
         lookup = self.http
         self.client._request.side_effect = lambda method, route, body=None, **kw: (
             admission(body) if method == "POST" and route == "/runs" else lookup(method, route, body, **kw))

@@ -75,6 +75,23 @@ class RunReceiptTests(ReceiptFixture):
     def admissions(self, **kwargs):
         return self.verify(**kwargs)['producers'][0]['source_admissions']
 
+    def test_compatible_admission_requires_retained_policy_upgrade_and_original_receipt(self):
+        delivery = self.submit()
+        receipt = self.admit(delivery)
+        original = 'b' * 64
+        self.db.execute('UPDATE source_runs SET policy_sha256=? WHERE uuid=?', (original, receipt['uuid']))
+        self.db.execute('CREATE TABLE source_run_policy_upgrades(run_uuid TEXT,policy_sha256 TEXT,created_at_ms INTEGER)')
+        self.db.execute('INSERT INTO source_run_policy_upgrades VALUES(?,?,1)', (receipt['uuid'], receipt['policy_sha256']))
+        self.db.commit()
+        receipt['execution_policy_sha256'] = receipt['policy_sha256']
+        receipt['policy_sha256'] = original
+        self.box.db.execute('UPDATE run_requests SET receipt=? WHERE request_uuid=?', (encode(receipt), delivery.request_uuid))
+        self.assertEqual(self.admissions()['counts']['admitted'], 1)
+        self.db.execute('DELETE FROM source_run_policy_upgrades')
+        self.db.commit()
+        with self.assertRaises(InvalidArchive):
+            self.admissions()
+
     def test_go_digest_corpus_includes_offsets_fractions_and_year_limits(self):
         for case in self.cases:
             with self.subTest(name=case['name']):

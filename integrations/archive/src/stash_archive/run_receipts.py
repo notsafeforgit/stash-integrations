@@ -12,7 +12,7 @@ from .storage import HEX, InvalidArchive, decode_json, json_bytes
 MAX_REQUEST = 8192
 MAX_WINDOWS = 64
 FIELDS = ("collection_uuid", "collection_revision", "operation", "policy_sha256", "cooldown_seconds")
-OPTIONAL_FIELDS = {"retrieval_url", "subscription_revision"}
+OPTIONAL_FIELDS = {"retrieval_url", "subscription_revision", "attachment_retry_event_uuid"}
 STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,9}))?(?:Z|[+-]\d{2}:\d{2})\Z")
 
 
@@ -47,6 +47,10 @@ def window(value):
 def template(value):
     if not isinstance(value, dict) or set(value) - OPTIONAL_FIELDS != set(FIELDS):
         raise InvalidArchive("Invalid retained source request template")
+    if 'attachment_retry_event_uuid' in value:
+        identifier(value['attachment_retry_event_uuid'])
+        if value['operation'] != 'download' or 'retrieval_url' not in value:
+            raise InvalidArchive('Invalid retained attachment retry request')
     if 'subscription_revision' in value and (type(value['subscription_revision']) is not int
             or not 1 <= value['subscription_revision'] <= 2147483647):
         raise InvalidArchive("Invalid retained source subscription revision")
@@ -76,10 +80,12 @@ def native_request_digest(value):
     SQLite source_run_requests stores this normalized typed representation, not
     the raw HTTP digest. Keep its field order and UTC RFC3339Nano timestamps.
     """
-    if not isinstance(value, dict) or set(value) - OPTIONAL_FIELDS != set(FIELDS) | {"request_uuid", "window"}:
+    if not isinstance(value, dict) or set(value) - OPTIONAL_FIELDS - {'reuse_compatible_policy'} != set(FIELDS) | {"request_uuid", "window"}:
         raise InvalidArchive("Invalid source admission request")
     identifier(value["request_uuid"])
-    definition = template({key: item for key, item in value.items() if key not in ('request_uuid', 'window')})
+    if 'reuse_compatible_policy' in value and type(value['reuse_compatible_policy']) is not bool:
+        raise InvalidArchive('Invalid compatible policy admission flag')
+    definition = template({key: item for key, item in value.items() if key not in ('request_uuid', 'window', 'reuse_compatible_policy')})
     normalized = window(value["window"])
     if normalized.get('basis') and definition['operation'] != 'download':
         raise InvalidArchive('Retained traversal is not a download request')
@@ -100,6 +106,10 @@ def native_request_digest(value):
         ordered = {'retrieval_url': definition['retrieval_url'], **ordered}
     if 'subscription_revision' in definition:
         ordered = {'subscription_revision': definition['subscription_revision'], **ordered}
+    if value.get('reuse_compatible_policy'):
+        ordered = {'reuse_compatible_policy': True, **ordered}
+    if 'attachment_retry_event_uuid' in definition:
+        ordered = {'attachment_retry_event_uuid': definition['attachment_retry_event_uuid'], **ordered}
     raw = json.dumps(ordered, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
     # Go's default JSON encoder escapes HTML characters, including URL '&'.
     for character in ('&', '<', '>', '\u2028', '\u2029'):
@@ -180,10 +190,13 @@ def verify_run_admissions(library, queue, producer, version):
             raise InvalidArchive('Source request changed its retained coverage basis')
         request = dict(definition, request_uuid=row["request_uuid"], window=selected_window)
         raw = producer_bytes(request)
+        if hashlib.sha256(raw).hexdigest() != row['sha256']:
+            request = {**request, 'reuse_compatible_policy': True}
+            raw = producer_bytes(request)
         if hashlib.sha256(raw).hexdigest() != row["sha256"]:
             raise InvalidArchive("Source request cannot be reconstructed from its retained template and window")
         native_hash = native_request_digest(request)
-        native = list(objects(library, f"""SELECT r.digest,r.run_uuid,j.uuid AS native_run_uuid,
+        native = list(objects(library, f"""SELECT r.digest,r.run_uuid,r.created_at_ms AS admitted_at,j.uuid AS native_run_uuid,
             j.collection_uuid,j.collection_revision,j.operation,j.policy_sha256,j.cooldown_seconds,j.root_uuid,j.root_revision,
             {retrieval} AS retrieval_url,{subscription} AS subscription_revision
             FROM source_run_requests r LEFT JOIN source_runs j ON j.uuid=r.run_uuid
@@ -192,9 +205,17 @@ def verify_run_admissions(library, queue, producer, version):
             raise InvalidArchive("Duplicate native source admission")
         server = native[0] if native else None
         if server is not None:
+            fields = tuple(key for key in FIELDS if key != 'policy_sha256')
+            compatible = server['policy_sha256'] == request['policy_sha256']
+            if (not compatible and request.get('reuse_compatible_policy') is True
+                    and library.execute("SELECT 1 FROM sqlite_schema WHERE name='source_run_policy_upgrades'").fetchone()):
+                compatible = bool(library.execute('''SELECT 1 FROM source_run_policy_upgrades
+                    WHERE run_uuid=? AND policy_sha256=? AND created_at_ms<=? LIMIT 1''',
+                    (server['run_uuid'], request['policy_sha256'], server['admitted_at'])).fetchone())
             if (server["digest"] != native_hash or server["run_uuid"] != server["native_run_uuid"]
                     or server['retrieval_url'] != request.get('retrieval_url')
-                    or json_bytes({key:server[key] for key in FIELDS}) != json_bytes({key:request[key] for key in FIELDS})):
+                    or not compatible
+                    or json_bytes({key:server[key] for key in fields}) != json_bytes({key:request[key] for key in fields})):
                 raise InvalidArchive("Native source admission does not match the original request")
             identifier(server["run_uuid"])
             # Older manual runs can acquire a subscription binding later. Only
@@ -212,6 +233,9 @@ def verify_run_admissions(library, queue, producer, version):
                     or json_bytes({key:receipt.get(key) for key in expected}) != json_bytes(expected)
                     or receipt.get("state") not in ("queued", "running", "succeeded", "deferred", "cancelled")):
                 raise InvalidArchive("Retained source admission identifies another request or run")
+            if (receipt['policy_sha256'] != request['policy_sha256']
+                    and receipt.get('execution_policy_sha256') != request['policy_sha256']):
+                raise InvalidArchive('Retained admission lost its reviewed compatible policy')
             evidence = {"receipt":receipt}
         else:
             if row["body"] != raw or row["receipt"] is not None or row["run_uuid"] is not None:

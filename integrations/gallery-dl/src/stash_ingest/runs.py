@@ -30,7 +30,7 @@ class SourceFailure(RuntimeError):
 
     def __init__(self, code, scope):
         if code not in {"source_busy", "rate_limited", "timeout", "extraction_failed", "authentication",
-                        "access_denied", "challenge", "not_found"} or not source_scope(scope):
+                        "access_denied", "challenge", "not_found", "source_history_limit"} or not source_scope(scope):
             raise InvalidData("Invalid source failure attribution")
         self.code, self.scope = code, scope
         super().__init__(code + " (" + scope + ")")

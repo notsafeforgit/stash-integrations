@@ -83,7 +83,7 @@ def main():
         ack = box.receipt(source["event_uuid"])
         assert client.receipt(source["event_uuid"]) == ack
         box.enqueue(encode(source))
-        assert box.status()["counts"] == {"pending": 0, "sending": 0, "review": 1, "acknowledged": 1}
+        assert box.status()["counts"] == {"pending": 0, "sending": 0, "review": 1, "acknowledged": 1, "retired": 0}
         print(json.dumps({"accepted": source["event_uuid"], "rejected": rejected["event_uuid"],
                           "sha256": ack["sha256"], "run_uuid": run_id}))
     finally:

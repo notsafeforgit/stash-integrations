@@ -55,7 +55,7 @@ class PolicyIdentityTests(unittest.TestCase):
                 before = Configuration(profile)
                 saved.remember(before)
                 row, = saved.rows(profile)
-                with patch("stash_ingest.configuration.EXECUTION_CONTRACT", "stash-worker-execution-v2"):
+                with patch("stash_ingest.configuration.EXECUTION_CONTRACT", "stash-worker-execution-v3"):
                     self.assertNotEqual(Configuration(profile).policy_sha256, before.policy_sha256)
                     self.assertEqual(saved.rows(profile), [])
                     with self.assertRaisesRegex(InvalidData, "compatibility upgrade"):

@@ -39,6 +39,8 @@ class WorkerTests(unittest.TestCase):
         self.client = Client("http://example.invalid", PRODUCER, timeout=1)
         self.client.capabilities = Mock(return_value={"source_runs": True, "source_run_protocol": 1, "source_run_recovery_protocol": 1, "source_run_pacing_protocol": 1, "source_run_fairness_protocol": 1, "source_request_budget_protocol": 1, "source_request_backoff_protocol": 1, "source_run_pagination_protocol": 1, "file_ingestion": True,
                                                      "source_run_origins_protocol": 1,
+                                                     "source_run_attachment_retry_protocol": 1,
+                                                     "source_run_redgifs_pagination_protocol": 1,
                                                      "source_run_instagram_pagination_protocol": 1,
                                                      "attachment_download_protocol": 1, "max_attachment_download_bytes": 16384, "file_transformation_protocol": 1,
                                                      "account_profile_protocol": 1, "max_account_profile_bytes": 131072,
@@ -339,7 +341,7 @@ class WorkerTests(unittest.TestCase):
                 self.lease.finish.assert_called_once_with(state, error_code=code)
 
     def test_account_access_failures_retry_but_credentials_need_attention(self):
-        for code in ('not_found', 'access_denied', 'authentication', 'challenge'):
+        for code in ('not_found', 'access_denied', 'authentication', 'challenge', 'source_history_limit'):
             with self.subTest(code=code):
                 state = 'retry' if code in ('not_found', 'access_denied') else 'deferred'
                 task = Mock(run=Mock(side_effect=SourceFailure(code, 'service:reddit')))
