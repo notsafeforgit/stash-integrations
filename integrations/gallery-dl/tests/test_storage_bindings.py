@@ -119,7 +119,7 @@ class StorageBindingTests(unittest.TestCase):
             self.write_storage()
             current = self.activate()
             restored = saved.load(row, storage=current.storage)
-            with sqlite3.connect(persistent / 'reddit.sqlite3') as db:
+            with closing(sqlite3.connect(persistent / 'reddit.sqlite3')) as db, db:
                 db.execute('CREATE TABLE archive(entry PRIMARY KEY) WITHOUT ROWID')
                 db.execute("INSERT INTO archive VALUES('redditknown')")
             for profile in (current, restored):

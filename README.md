@@ -119,3 +119,23 @@ checkpoints, and actual receipt history. Stop writers during the coordinated
 upgrade and wait for active backup captures to finish before changing captured
 runtime configuration. Vanilla gallery-dl does not interpret the adapter's post
 completion entries; keep using the native adapter for these managed jobs.
+
+Release v0.6.23 introduces execution contract v4 (producer schema stays 24).
+An explicit `User account deleted.` response from the claimed Redgifs account's
+listing retires that source and cancels its remaining work without marking it
+successfully downloaded. The native server preserves captures, media, archives,
+unfinished ranges and attempt history. Generic missing/private profiles retain
+their recovery checks. Deleted profiles cannot be relinked by old Reddit posts;
+a different Redgifs uploader discovered later can still be linked and monitored.
+
+Reddit's explicit suspension and X's structured unavailable-user result retain
+separate `account_suspended`, `account_deactivated`, `account_unavailable` and
+`account_not_found` codes where the provider supplies that distinction. These
+remain eligible for monthly rechecks. A missing or renamed handle, generic 404,
+or suspension does not establish permanent deletion.
+
+Deploy native schema 1000138 advertising `source_run_account_status_protocol: 1`
+and `source_run_redgifs_deletion_protocol: 1`,
+then explicitly upgrade reviewed v3 policies to v4 while writers are stopped and
+no backup is capturing their configuration. Keep the same producer identities,
+outboxes, archive files and destinations.

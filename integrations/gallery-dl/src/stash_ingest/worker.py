@@ -113,6 +113,8 @@ def execute(box, client, configuration, run_uuid):
             or "attachment.download" not in capabilities.get("kinds", [])
             or capabilities.get("file_ingestion") is not True):
         raise Unavailable("native_download_worker_unavailable")
+    if capabilities.get('source_run_account_status_protocol') != 1:
+        raise Unavailable('native_account_status_unavailable')
     if configuration.source_category == 'reddit' and (capabilities.get('account_profile_protocol') != 1
             or 'account.profile' not in capabilities.get('kinds', [])
             or capabilities.get('max_account_profile_bytes', 0) < 128 << 10):
@@ -121,6 +123,8 @@ def execute(box, client, configuration, run_uuid):
         raise Unavailable('native_attachment_retry_unavailable')
     if configuration.source_category == 'redgifs' and capabilities.get('source_run_redgifs_pagination_protocol') != 1:
         raise Unavailable('native_redgifs_pagination_unavailable')
+    if configuration.source_category == 'redgifs' and capabilities.get('source_run_redgifs_deletion_protocol') != 1:
+        raise Unavailable('native_redgifs_deletion_unavailable')
     if configuration.source_mode == 'traversal' and capabilities.get('source_run_traversal_protocol') != 1:
         raise Unavailable('native_source_traversal_unavailable')
     current = client._request("GET", "/runs/" + run_uuid)
@@ -192,8 +196,9 @@ def execute(box, client, configuration, run_uuid):
         except SourceFailure as exc:
             # Missing/private accounts can return or grant access later. The
             # server checks missing profiles monthly and private profiles daily.
-            # A provider's history limit needs review, not a false completion.
-            outcome = "deferred" if exc.code in {"authentication", "challenge", "source_history_limit"} else "retry"
+            # Explicit Redgifs deletion retires only that account. Neither it
+            # nor a provider history limit proves successful source coverage.
+            outcome = "deferred" if exc.code in {"authentication", "challenge", "source_history_limit", "account_deleted"} else "retry"
             error, error_scope = exc.code, exc.scope
         except SourcePaused:
             result = {"state": "paused", "run_uuid": run_uuid, "error_code": "source_ownership_unavailable"}

@@ -239,6 +239,7 @@ class TranslationActivationTests(unittest.TestCase):
             out = io.StringIO()
             with redirect_stderr(out):
                 self.assertEqual(1, main(["show", *args, "--page", "1"]))
+            self.assertTrue(out.getvalue().startswith('{'), repr(out.getvalue()))
             self.assertFalse(json.loads(out.getvalue())["activation_complete"])
 
     def test_http_rejects_redirects_compression_and_malformed_json(self):

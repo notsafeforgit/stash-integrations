@@ -18,7 +18,7 @@ CAPTURE_VERSION = "stash-gallery-v1"
 # retained outputs. Incompatible changes require a new contract and an explicit
 # upgrade; compatible implementation repairs retain this identity. The release
 # review gate binds the actual source bytes to that compatibility decision.
-EXECUTION_CONTRACT = "stash-worker-execution-v3"
+EXECUTION_CONTRACT = "stash-worker-execution-v4"
 
 
 def implementation_identity(package=None):

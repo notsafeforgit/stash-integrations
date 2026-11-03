@@ -30,7 +30,8 @@ class SourceFailure(RuntimeError):
 
     def __init__(self, code, scope):
         if code not in {"source_busy", "rate_limited", "timeout", "extraction_failed", "authentication",
-                        "access_denied", "challenge", "not_found", "source_history_limit"} or not source_scope(scope):
+                        "access_denied", "challenge", "not_found", "source_history_limit", "account_deleted",
+                        "account_suspended", "account_deactivated", "account_unavailable", "account_not_found"} or not source_scope(scope):
             raise InvalidData("Invalid source failure attribution")
         self.code, self.scope = code, scope
         super().__init__(code + " (" + scope + ")")
@@ -172,6 +173,8 @@ class RunLease:
             try:
                 expected = {"succeeded": {"queued", "succeeded"}, "retry": {"queued", "deferred"},
                             "deferred": {"deferred"}}.get(state)
+                if state == 'deferred' and error_code == 'account_deleted' and error_scope == 'service:redgifs':
+                    expected = {'cancelled'}
                 if expected is None:
                     raise InvalidData("Invalid source attempt outcome")
                 outcome = {"state": state, "error_code": error_code, "retry_after_seconds": retry_after_seconds}

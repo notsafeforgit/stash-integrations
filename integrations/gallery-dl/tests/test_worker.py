@@ -41,6 +41,8 @@ class WorkerTests(unittest.TestCase):
                                                      "source_run_origins_protocol": 1,
                                                      "source_run_attachment_retry_protocol": 2,
                                                      "source_run_redgifs_pagination_protocol": 1,
+                                                     "source_run_redgifs_deletion_protocol": 1,
+                                                     "source_run_account_status_protocol": 1,
                                                      "source_run_instagram_pagination_protocol": 1,
                                                      "attachment_download_protocol": 1, "max_attachment_download_bytes": 16384, "file_transformation_protocol": 1,
                                                      "account_profile_protocol": 1, "max_account_profile_bytes": 131072,
@@ -143,6 +145,13 @@ class WorkerTests(unittest.TestCase):
             return Mock(run=Mock(return_value=0))
 
         self.assertEqual(self.run_worker(task)['state'], 'source_succeeded')
+
+    def test_account_status_requires_native_support_before_claim_or_requests(self):
+        self.client.capabilities.return_value['source_run_account_status_protocol'] = 0
+        with self.assertRaisesRegex(Unavailable, 'native_account_status_unavailable'):
+            self.run_worker()
+        self.claim.assert_not_called()
+        self.assertEqual(self.downloaded, [])
 
     def test_success_preserves_queued_files_without_claiming_intake_completion(self):
         result = self.run_worker()
@@ -417,15 +426,44 @@ class WorkerTests(unittest.TestCase):
                 self.lease.finish.assert_called_once_with(state, error_code=code)
 
     def test_account_access_failures_retry_but_credentials_need_attention(self):
-        for code in ('not_found', 'access_denied', 'authentication', 'challenge', 'source_history_limit'):
+        for code in ('not_found', 'account_not_found', 'account_suspended', 'account_deactivated', 'account_unavailable',
+                     'access_denied', 'authentication', 'challenge', 'source_history_limit'):
             with self.subTest(code=code):
-                state = 'retry' if code in ('not_found', 'access_denied') else 'deferred'
+                state = 'deferred' if code in ('authentication', 'challenge', 'source_history_limit') else 'retry'
                 task = Mock(run=Mock(side_effect=SourceFailure(code, 'service:reddit')))
                 self.lease.finish.reset_mock()
                 self.lease.finish.return_value = {'state': 'queued' if state == 'retry' else state}
                 result = self.run_worker(lambda *a, **kw: task)
                 self.assertEqual((result['state'], result['error_code']), (state, code))
                 self.lease.finish.assert_called_once_with(state, error_code=code, error_scope='service:reddit')
+
+    def test_redgifs_deletion_requires_native_support_and_finishes_without_success(self):
+        document = json.loads((self.directory / 'worker.json').read_text())
+        document['source_category'] = 'redgifs'
+        self.profile = Configuration.from_document(document, self.directory)
+        self.lease.run.update(policy_sha256=self.profile.policy_sha256,
+                              target_url='https://www.redgifs.com/users/example')
+        self.client._request.return_value = self.lease.run
+        self.client.capabilities.return_value['source_run_redgifs_deletion_protocol'] = 0
+        with self.assertRaisesRegex(Unavailable, 'native_redgifs_deletion_unavailable'):
+            self.run_worker()
+        self.claim.assert_not_called()
+        self.client.capabilities.return_value['source_run_redgifs_deletion_protocol'] = 1
+        task = Mock(run=Mock(side_effect=SourceFailure('account_deleted', 'service:redgifs')))
+        self.lease.finish.return_value = {'state': 'cancelled'}
+        result = self.run_worker(lambda *a, **kw: task)
+        self.assertEqual((result['state'], result['run_state'], result['error_code']),
+                         ('deferred', 'cancelled', 'account_deleted'))
+        self.lease.finish.assert_called_once_with('deferred', error_code='account_deleted', error_scope='service:redgifs')
+        self.assertEqual(self.downloaded, [])
+        self.lease.finish.side_effect = Unavailable('network_unavailable')
+        attempt = {'run_uuid': RUN, 'producer_uuid': PRODUCER, 'owner_uuid': self.lease.owner,
+                   'fence': 3, 'outcome': 'deferred', 'error_code': 'account_deleted',
+                   'error_scope': 'service:redgifs', 'ended_at': '2026-10-01T12:00:00Z'}
+        self.client._request.side_effect = lambda method, route, *args: [attempt] if route.endswith('/attempts') else self.lease.run
+        result = self.run_worker(lambda *a, **kw: task)
+        self.assertEqual(result['state'], 'deferred')
+        self.assertTrue(result['finish_recovered'])
 
     def test_lost_finish_requires_the_exact_completed_attempt(self):
         attempt = {"run_uuid": RUN, "producer_uuid": PRODUCER, "owner_uuid": self.lease.owner,
