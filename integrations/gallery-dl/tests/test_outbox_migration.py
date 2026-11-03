@@ -17,10 +17,15 @@ from test_run_queue import request, admission
 
 def schema_twenty_two(db):
     """Remove schema 23's ledger and event guards from populated older fixtures."""
-    for trigger in ('profile_retirement_scope', 'profile_retirement_no_update', 'profile_retirement_no_delete',
+    for trigger in ('retired_event_run_no_insert', 'retired_event_run_no_update', 'outbox_event_high_water',
+                    'retired_run_no_update', 'retired_run_no_delete',
+                    'profile_retirement_scope', 'profile_retirement_no_update', 'profile_retirement_no_delete',
                     'retired_profile_no_update', 'retired_profile_no_delete'):
         db.execute('DROP TRIGGER IF EXISTS ' + trigger)
     db.execute('DROP TABLE IF EXISTS profile_event_retirements')
+    db.execute('DROP INDEX IF EXISTS retained_event_runs')
+    db.execute('DROP TABLE IF EXISTS retired_event_runs')
+    db.execute('DROP TABLE IF EXISTS outbox_history_state')
     db.execute('PRAGMA user_version=22')
 
 

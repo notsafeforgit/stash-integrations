@@ -128,6 +128,15 @@ covers. It preserves present and untracked artwork and refuses changed sources.
 The restore receipt explicitly records pending renditions. Older archives remain
 readable; older readers reject version 2.
 
+Producer schema 24 can retire acknowledged delivery history for terminal source
+runs after comparing every receipt with the native library. Its compact run
+proofs preserve receipt counts, digests and the event sequence high-water mark.
+The historical audit verifies those proofs against native receipts, including
+after local rows have been removed; missing receipts still fail verification.
+Capture verification checks the producer identity and sequence state without
+claiming a full receipt audit. Deploy version 0.6.19 readers and all shared-outbox
+clients before migrating producers to schema 24.
+
 The host exporter can retain unfinished packing and authenticate reusable library
 chunks against the original sealed checkpoint. Reuse never changes the captured
 database, configuration, producer state or successful verification evidence.

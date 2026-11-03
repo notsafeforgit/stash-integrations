@@ -17,7 +17,7 @@ from .encoding import InvalidData, MAX_BATCH_BYTES, decode, digest, encode, iden
 from .endpoint import origin
 
 APPLICATION_ID = 0x5354494F  # STIO, not a Stash or gallery-dl archive database.
-SCHEMA = 23
+SCHEMA = 24
 
 
 def is_contention(error):
@@ -39,6 +39,10 @@ class LeaseLost(RuntimeError):
     pass
 
 
+class _RetiredRun(Exception):
+    """Unwind the write transaction before resolving an old receipt remotely."""
+
+
 @dataclass(frozen=True)
 class Delivery:
     event_uuid: str
@@ -51,12 +55,13 @@ class Delivery:
 
 class Outbox:
     def __init__(self, path, endpoint, producer, *, max_events=10000,
-                 max_bytes=512 << 20, clock=time.time, create=True):
+                 max_bytes=512 << 20, clock=time.time, create=True, receipt_lookup=None):
         self.endpoint = origin(endpoint)
         self.producer = identifier(producer)
         if type(max_events) is not int or max_events < 1 or type(max_bytes) is not int or max_bytes < 1:
             raise InvalidData("Outbox capacity must be positive")
         self.max_events, self.max_bytes, self.clock = max_events, max_bytes, clock
+        self.receipt_lookup = receipt_lookup
         path = Path(path).absolute()
         self.path = path
         # The directory is provisioned by the runner. Do not silently create a
@@ -217,6 +222,9 @@ class Outbox:
         if version < 23:
             from .profile_retirement import migrate
             migrate(self.db)
+        if version < 24:
+            from .outbox_history import migrate
+            migrate(self.db)
         self.db.execute(f"PRAGMA user_version={SCHEMA}")
 
     def _migrate_dispatch(self):
@@ -287,6 +295,17 @@ class Outbox:
             (SELECT coalesce(sum(reserved_bytes),0) FROM discovery_detail_executions)""").fetchone()[0]
 
     def enqueue(self, body):
+        try:
+            return self._enqueue(body)
+        except _RetiredRun:
+            event = events.validate(body)
+            saved = self._retired_receipt(event["event_uuid"])
+            keys = ("producer_uuid", "event_uuid", "kind", "run_uuid", "collection_uuid", "collection_revision", "root_uuid")
+            if saved is None or saved["sha256"] != digest(body) or any(saved.get(k) != event.get(k) for k in keys):
+                raise Conflict("Retired source run requires the exact previously accepted event")
+            return event["event_uuid"]
+
+    def _enqueue(self, body):
         event = events.validate(body)
         if event["producer_uuid"] != self.producer:
             raise Conflict("Event belongs to a different producer")
@@ -297,6 +316,8 @@ class Outbox:
         if download:
             parent_id = event.get("file_event_uuid") or event["capture_event_uuid"]
         with self.transaction():
+            if self.db.execute("SELECT 1 FROM retired_event_runs WHERE run_uuid=?", (event["run_uuid"],)).fetchone():
+                raise _RetiredRun()
             previous = self.db.execute("SELECT sha256 FROM events WHERE event_uuid=?", (event_id,)).fetchone()
             if previous:
                 if previous[0] != sha:
@@ -315,10 +336,13 @@ class Outbox:
             if count >= self.max_events or size + len(body) > self.max_bytes:
                 raise Capacity("Outbox capacity exhausted; pause new downloads and drain or review the queue")
             now = self.clock()
-            self.db.execute("""INSERT INTO events(event_uuid,sha256,kind,collection_uuid,
+            sequence = self.db.execute("""SELECT max(last_sequence,
+                (SELECT coalesce(max(seq),0) FROM events))+1 FROM outbox_history_state WHERE id=1""").fetchone()[0]
+            self.db.execute("UPDATE outbox_history_state SET last_sequence=? WHERE id=1", (sequence,))
+            self.db.execute("""INSERT INTO events(seq,event_uuid,sha256,kind,collection_uuid,
                 collection_revision,root_uuid,run_uuid,parent_uuid,body,state,available_at,created_at)
-                VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)""",
-                (event_id, sha, event["kind"], event["collection_uuid"], event["collection_revision"],
+                VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?)""",
+                (sequence, event_id, sha, event["kind"], event["collection_uuid"], event["collection_revision"],
                  event["root_uuid"], event["run_uuid"], parent_id, body, now, now))
         return event_id
 
@@ -430,7 +454,30 @@ class Outbox:
     def receipt(self, event_uuid):
         identifier(event_uuid)
         row = self.db.execute("SELECT receipt FROM events WHERE event_uuid=?", (event_uuid,)).fetchone()
-        return decode(row[0], 65536) if row and row[0] is not None else None
+        if row is not None:
+            return decode(row[0], 65536) if row[0] is not None else None
+        if self.db.execute("SELECT 1 FROM retired_event_runs LIMIT 1").fetchone():
+            return self._retired_receipt(event_uuid)
+        return None
+
+    def _retired_receipt(self, event_uuid):
+        from .client import Client, Unavailable
+        from .outbox_history import receipt_record
+        if self.db.in_transaction:
+            raise Conflict("Remote receipt lookup cannot run inside an outbox transaction")
+        lookup = self.receipt_lookup or Client(self.endpoint, self.producer).receipt
+        try:
+            value = lookup(event_uuid)
+        except Unavailable as error:
+            if error.status == 404:
+                return None
+            raise
+        saved = receipt_record(value)
+        if saved["producer_uuid"] != self.producer or saved["event_uuid"] != event_uuid:
+            raise Conflict("Native receipt belongs to another producer or event")
+        if not self.db.execute("SELECT 1 FROM retired_event_runs WHERE run_uuid=?", (saved["run_uuid"],)).fetchone():
+            return None
+        return value
 
     def status(self):
         rows = self.db.execute("""SELECT state,count(*) AS count,coalesce(sum(length(body)),0) AS bytes,
