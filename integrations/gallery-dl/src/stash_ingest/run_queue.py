@@ -13,11 +13,15 @@ from . import tickets
 
 def specification(value):
     fields = {"collection_uuid", "collection_revision", "operation", "policy_sha256", "cooldown_seconds", "window"}
-    if not isinstance(value, dict) or set(value) - {"retrieval_url", 'subscription_revision'} != fields:
+    if not isinstance(value, dict) or set(value) - {"retrieval_url", 'subscription_revision', 'attachment_retry_event_uuid'} != fields:
         raise InvalidData("Source requests accept only the typed collection, policy and window fields")
     if "retrieval_url" in value:
         from .collections import target_url
         target_url(value["retrieval_url"])
+    if 'attachment_retry_event_uuid' in value:
+        identifier(value['attachment_retry_event_uuid'])
+        if value['operation'] != 'download' or 'retrieval_url' not in value:
+            raise InvalidData('Attachment retries require a focused download retrieval')
     identifier(value["collection_uuid"])
     if 'subscription_revision' in value and (type(value['subscription_revision']) is not int
             or not 1 <= value['subscription_revision'] <= 2147483647):
@@ -157,7 +161,8 @@ class RunQueue:
                 pending = decode(group["windows"], 16384)
                 window = pending.pop()
                 request_id = str(uuid.uuid4())
-                body = encode({**decode(group["template"], 8192), "request_uuid": request_id, "window": window}, 8192)
+                body = encode({**decode(group["template"], 8192), "request_uuid": request_id, "window": window,
+                               "reuse_compatible_policy": True}, 8192)
                 self.db.execute("""INSERT INTO run_requests(request_uuid,intent_uuid,sha256,window,until_stamp,
                     body,state,available_at,created_at) VALUES(?,?,?,?,?,?,'pending',?,?)""",
                     (request_id, group["uuid"], digest(body), encode(window), window["until"], body, now, group["pending_since"]))
@@ -186,7 +191,10 @@ class RunQueue:
             request = decode(row["body"], 8192)
             if (not isinstance(receipt, dict) or receipt.get("request_uuid") != delivery.request_uuid
                     or any(receipt.get(k) != request[k] for k in (
-                        "collection_uuid", "collection_revision", "operation", "policy_sha256", "cooldown_seconds"))):
+                        "collection_uuid", "collection_revision", "operation", "cooldown_seconds"))
+                    or (receipt.get("policy_sha256") != request["policy_sha256"] and not (
+                        request.get("reuse_compatible_policy") is True
+                        and receipt.get("execution_policy_sha256") == request["policy_sha256"]))):
                 raise Conflict("Run admission does not acknowledge this source request")
             if receipt.get("retrieval_url") != request.get("retrieval_url"):
                 raise Conflict("Run admission changed the requested retrieval")
@@ -267,6 +275,12 @@ def submit_once(queue, client, *, owner=None):
         if (capabilities.get("source_runs") is not True or capabilities.get("source_run_protocol") != 1
                 or capabilities.get("source_run_submission_receipts") is not True):
             raise Unavailable("incompatible_source_runs")
+        if (decode(delivery.body).get('reuse_compatible_policy') is True
+                and capabilities.get('source_run_compatible_admission_protocol') != 1):
+            raise Unavailable('native_compatible_admission_unavailable')
+        if (decode(delivery.body).get('attachment_retry_event_uuid')
+                and capabilities.get('source_run_attachment_retry_protocol') != 1):
+            raise Unavailable('native_attachment_retry_unavailable')
         if (decode(delivery.body)['window'].get('basis') == 'traversal'
                 and capabilities.get('source_run_traversal_protocol') != 1):
             raise Unavailable('native_source_traversal_unavailable')

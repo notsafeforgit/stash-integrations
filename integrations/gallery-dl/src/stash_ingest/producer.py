@@ -7,6 +7,7 @@ import uuid
 
 from .client import Unavailable
 from .encoding import InvalidData, digest, encode, identifier, utc_now
+from .outbox import Capacity
 from .retention import POLICY, retain
 from .runs import SourceFailure, SourcePaused, SourceTurnComplete
 from .source_window import SourceWindow
@@ -27,7 +28,7 @@ class Prepared:
 
 class Producer:
     def __init__(self, outbox, lease, root, *, extractor_version, configuration_check=None, source_category=None,
-                 clock=time.monotonic, scan_mode='initial'):
+                 clock=time.monotonic, scan_mode='initial', attachment_retries=False):
         lease.check()
         run = lease.run
         if (outbox.producer != lease.client.producer or outbox.endpoint != lease.client.endpoint
@@ -35,6 +36,8 @@ class Producer:
             raise InvalidData("Producer must own a download run at its permitted media root")
         self.outbox, self.lease, self.root = outbox, lease, root
         self.source_category = source_category
+        self.attachment_retries = attachment_retries
+        self.unhandled_download_failure = False
         self.scan_mode = scan_mode
         self.routine_post_items = 0
         self.routine_post_new = False
@@ -42,6 +45,7 @@ class Producer:
         if configuration_check is not None and not callable(configuration_check):
             raise InvalidData("Invalid worker configuration check")
         self.configuration_check = configuration_check or (lambda: None)
+        self.backpressure = configuration_check is not None
         self.failure_code = None
         self.source_failure = None
         self.publication_failure = None
@@ -146,6 +150,42 @@ class Producer:
 
     def prepare(self, metadata):
         return self._prepare(metadata)
+
+    def wait_for_outbox(self):
+        # Wait outside any write transaction so the concurrent drainer can
+        # acknowledge receipts. Backpressure is a local pause, not new source work.
+        if not self.backpressure:
+            return
+        deadline = self.clock() + 30
+        while True:
+            count, size = self.outbox.db.execute(
+                'SELECT count(*),coalesce(sum(length(body)),0) FROM events WHERE body IS NOT NULL').fetchone()
+            reserve = min(32, max(1, self.outbox.max_events // 10))
+            if count < max(1, self.outbox.max_events - reserve) and size < self.outbox.max_bytes * .9:
+                return
+            self.check()
+            if self.clock() >= deadline:
+                raise Capacity('Outbox did not drain within the bounded source pause')
+            self.lease.stop.wait(.2)
+
+    def retry_missing_file(self, prepared, event_uuid):
+        if not self.attachment_retries or self.lease.run.get('attachment_retry'):
+            return False
+        post = source.post(prepared.source)
+        if post['namespace'] != 'native:reddit':
+            return False
+        from .run_queue import RunQueue
+        run = self.lease.run
+        request = {'collection_uuid': run['collection_uuid'], 'collection_revision': run['collection_revision'],
+                   'operation': 'download', 'policy_sha256': run.get('execution_policy_sha256', run['policy_sha256']),
+                   'cooldown_seconds': 0, 'window': run['window'], 'attachment_retry_event_uuid': event_uuid,
+                   'retrieval_url': 'https://www.reddit.com/comments/' + post['value'] + '/'}
+        if run.get('subscription_revision'):
+            request['subscription_revision'] = run['subscription_revision']
+        # The failure receipt can arrive later; native admission responds with
+        # a retryable dependency wait until it can verify that exact report.
+        RunQueue(self.outbox).enqueue(request)
+        return True
 
     def observe_profile(self, metadata):
         self.check()

@@ -236,7 +236,7 @@ def main():
             drain_once(box, client)
             if box.status()["counts"]["acknowledged"] == expected_events:
                 break
-        assert box.status()["counts"] == {"pending": 0, "sending": 0, "review": 0, "acknowledged": expected_events}, box.status()
+        assert box.status()["counts"] == {"pending": 0, "sending": 0, "review": 0, "acknowledged": expected_events, "retired": 0}, box.status()
         for event_id, state in ((start_id, "started"), (end_id, "downloaded")):
             report = box.receipt(event_id)
             assert report["capture_uuid"] == box.receipt(capture_id)["capture_uuid"]

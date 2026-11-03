@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import Mock
 
 from gallery_dl import config, extractor
-from gallery_dl.extractor import instagram, reddit, twitter
+from gallery_dl.extractor import instagram, reddit, twitter, redgifs
 from stash_ingest import pagination, recent
 from stash_ingest.producer import Producer
 from stash_ingest.runs import SourcePaused
@@ -29,6 +29,35 @@ class PaginationTests(unittest.TestCase):
         if page is not None:
             self.lease.run['progress']['pagination'] = {**page, 'item': anchor}
         return Producer(self.box, self.lease, self.root, extractor_version='fixture'), anchor
+
+    def test_redgifs_resumes_saved_page_and_keeps_auth_requests_out_of_checkpoint(self):
+        target = redgifs.RedgifsUserExtractor.from_url('https://www.redgifs.com/users/example')
+        target.initialize()
+        page = {'extractor': 'redgifs:user', 'url': target.url, 'cursor': '42', 'item': ''}
+        producer, _ = self.resumed(page)
+        calls = []
+        def call(endpoint, params=None):
+            calls.append((endpoint, dict(params) if params is not None else None))
+            return {'gifs': [], 'pages': 43}
+        target.api._call = call
+        pagination.install(target, producer)
+        target.api._call('/v2/auth/temporary')
+        self.assertEqual(self.lease.pages, [])
+        self.assertEqual(list(target.gifs()), [])
+        self.assertEqual([params['page'] for _, params in calls if params], [42, 43])
+        self.assertEqual(self.lease.pages[-1]['cursor'], '43')
+
+    def test_redgifs_failed_page_request_keeps_its_saved_page(self):
+        target = redgifs.RedgifsUserExtractor.from_url('https://www.redgifs.com/users/example')
+        target.initialize()
+        page = {'extractor': 'redgifs:user', 'url': target.url, 'cursor': '42', 'item': ''}
+        producer, anchor = self.resumed(page)
+        target.api._call = Mock(side_effect=RuntimeError('temporary request failure'))
+        pagination.install(target, producer)
+        with self.assertRaisesRegex(RuntimeError, 'temporary request failure'):
+            list(target.gifs())
+        self.assertEqual(producer.pagination, {**page, 'item': anchor})
+        self.assertEqual(producer.resume_cursor, anchor)
 
     def test_partial_page_keeps_checkpoint_on_http_retry_then_advances(self):
         producer, anchor = self.resumed(PAGE)

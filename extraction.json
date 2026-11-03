@@ -35,6 +35,17 @@
       },
       "reason": "Standalone account profile schema fixture from the coordinated core release; exact contents retained for producer receipt verification.",
       "revision": "8aa14e063c1e4139f905e9f3d96bb937821a053f"
+    },
+    {
+      "revision": "5cc207d5caab989109b6a77977b0df8a86582123",
+      "paths": [
+        "pkg/archive/testdata/source-run-digests.json"
+      ],
+      "sha256": {
+        "pkg/archive/testdata/source-run-digests.json": "2156b0db4c6d50417d7adcb30ce776fbe48c99aa8fbab5df043f4a4d0fd03b3c"
+      },
+      "destination": "integrations/archive/tests/fixtures/source-run-digests.json",
+      "reason": "Native Go digest vectors for compatible-policy admission and failed-attachment retry requests; copied exactly from core."
     }
   ]
 }

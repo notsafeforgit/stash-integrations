@@ -25,19 +25,42 @@ def validate(page):
                 or any(ord(char) < 32 or ord(char) == 127 for char in value)):
             raise InvalidData('Invalid source pagination value')
     parsed = urlsplit(page['url'])
-    if (not page['extractor'].startswith(('twitter:', 'reddit:', 'instagram:')) or parsed.scheme != 'https'
+    if ((not page['extractor'].startswith(('twitter:', 'reddit:', 'instagram:')) and page['extractor'] != 'redgifs:user') or parsed.scheme != 'https'
             or not parsed.hostname or parsed.username is not None or parsed.password is not None or parsed.fragment):
         raise InvalidData('Invalid source pagination target')
     return dict(page)
 
 
 def install(target, producer):
-    if target.category not in ('twitter', 'reddit', 'instagram'):
+    if target.category not in ('twitter', 'reddit', 'instagram', 'redgifs'):
         return
     category = target.category + ':' + target.subcategory
     saved = producer.saved_pagination
     resume = saved if saved is not None and (saved['extractor'], saved['url']) == (category, target.url) else None
-    if target.category == 'instagram':
+    if target.category == 'redgifs':
+        if target.subcategory != 'user' or not hasattr(target, 'api'):
+            return
+        original_call = target.api._call
+        first = True
+
+        def call(endpoint, params=None, *args, **kwargs):
+            nonlocal first
+            if endpoint == '/v2/users/' + target.key.lower() + '/search':
+                if not isinstance(params, dict):
+                    raise InvalidData('Redgifs listing has no page parameters')
+                if first and resume is not None:
+                    if not resume['cursor'].isdigit() or not 1 <= int(resume['cursor']) <= 1000000:
+                        raise InvalidData('Invalid saved Redgifs page')
+                    params['page'] = int(resume['cursor'])
+                first = False
+                page = params.get('page', 1)
+                if type(page) is not int or not 1 <= page <= 1000000:
+                    raise InvalidData('Invalid Redgifs listing page')
+                producer.begin_page({'extractor': category, 'url': target.url, 'cursor': str(page), 'item': ''})
+            return original_call(endpoint, params, *args, **kwargs)
+
+        target.api._call = call
+    elif target.category == 'instagram':
         # The pinned post/photo feed uses one GraphQL connection. Profile
         # lookups, story reels and individual media are different requests and
         # must neither consume its saved cursor nor replace its checkpoint.

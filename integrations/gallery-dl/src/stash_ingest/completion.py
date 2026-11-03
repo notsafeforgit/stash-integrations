@@ -45,7 +45,7 @@ def ticket_snapshot(box, ticket_uuid):
 
 def validate_run(value, assignment, requested, expected=None):
     receipt = decode(assignment["receipt"], 65536)
-    fields = ("collection_uuid", "collection_revision", "operation", "policy_sha256", "cooldown_seconds")
+    fields = ("collection_uuid", "collection_revision", "operation", "cooldown_seconds")
     if (not isinstance(receipt, dict) or receipt.get("request_uuid") != assignment["request_uuid"]
             or receipt.get("uuid") != assignment["run_uuid"] or not isinstance(value, dict)
             or value.get("uuid") != assignment["run_uuid"]):
@@ -55,6 +55,10 @@ def validate_run(value, assignment, requested, expected=None):
         if any(type(record.get(field)) is not type(requested[field]) or record[field] != requested[field]
                for record in (receipt, value)):
             raise InvalidData("Source status does not match this caller's definition")
+    if (receipt.get('policy_sha256') != requested['policy_sha256']
+            and receipt.get('execution_policy_sha256') != requested['policy_sha256']
+            or value.get('policy_sha256') != receipt.get('policy_sha256')):
+        raise InvalidData('Source status changed its admitted policy identity')
     if any(record.get("retrieval_url") != requested.get("retrieval_url") for record in (receipt, value)):
         raise InvalidData("Source status changed the requested retrieval")
     root = receipt.get("root_uuid")

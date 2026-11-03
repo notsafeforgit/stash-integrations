@@ -493,6 +493,53 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(events[-1]["reason_code"], "download_failed")
         self.assertEqual(self.archive_count(), 0)
 
+    def test_missing_file_handoff_finishes_traversal_and_retains_focused_retry(self):
+        from stash_ingest.run_queue import RunQueue
+        self.producer.attachment_retries = True
+        self.lease.run['policy_sha256'] = 'a' * 64
+        task = self.task()
+        task.download = lambda _: False
+        self.assertEqual(task.run(), 0)
+        events = self.events(kinds=None)
+        self.assertEqual(events[-1]['state'], 'failed')
+        self.assertEqual(self.archive_count(), 0)
+        self.assertEqual(self.lease.checkpoints[-1][:2], (1, 0))
+        pending = RunQueue(self.box).claim(self.lease.owner)
+        request = decode(pending.body)
+        self.assertEqual(request['attachment_retry_event_uuid'], events[-1]['event_uuid'])
+        self.assertEqual(request['retrieval_url'], 'https://www.reddit.com/comments/postabc123/')
+        from stash_ingest.windows import normalize
+        self.assertEqual(request['window'], normalize(self.lease.run['window']))
+        self.assertEqual(request['collection_uuid'], self.lease.run['collection_uuid'])
+
+    def test_missing_file_cannot_complete_before_its_retry_is_durable(self):
+        from stash_ingest.outbox import Capacity
+        self.producer.attachment_retries = True
+        self.lease.run['policy_sha256'] = 'a' * 64
+        task = self.task()
+        task.download = lambda _: False
+        with patch('stash_ingest.run_queue.RunQueue.enqueue', side_effect=Capacity('retry queue full')):
+            self.assertNotEqual(task.run(), 0)
+        self.assertEqual(self.lease.checkpoints, [])
+        self.assertEqual(self.events(kinds=None)[-1]['state'], 'failed')
+
+    def test_focused_retry_does_not_fork_more_retries_or_claim_success(self):
+        self.producer.attachment_retries = True
+        self.lease.run['attachment_retry'] = True
+        task = self.task()
+        task.download = lambda _: False
+        self.assertNotEqual(task.run(), 0)
+        self.assertEqual(self.box.db.execute('SELECT count(*) FROM run_intents').fetchone()[0], 0)
+        self.assertEqual(self.archive_count(), 0)
+
+    def test_missing_file_handoff_does_not_hide_later_source_validation_error(self):
+        self.producer.attachment_retries = True
+        self.lease.run['policy_sha256'] = 'a' * 64
+        task = self.task(reddit_data('first'), reddit_data('invalid', date='not-a-date'))
+        task.download = lambda _: False
+        self.assertNotEqual(task.run(), 0)
+        self.assertEqual(self.producer.failure_code, 'source_rejected')
+
     def test_fallback_urls_share_one_transfer_and_do_not_record_early_failure(self):
         config.set(("extractor",), "fallback", True)
         task = self.task(reddit_data(_fallback=["https://fixture.invalid/fallback.jpg"]))

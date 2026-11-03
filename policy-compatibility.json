@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v1",
-  "implementation_sha256": "aa9358c4bbcdcbb237f02268bd2f4cd3b4330da2bf429db8fbbc2293c9c5f782",
-  "decision": "compatible",
-  "reason": "Schema 24 retires only fully acknowledged source runs that are terminal in Stash and whose complete receipt digests match the native library. Keep unfinished runs, original pending bytes, producer identities, local review decisions, and a monotonic event sequence. Exact retired replays resolve immutable server receipts outside SQLite transactions. Upgrade all outbox writers and archive readers together before migration. Download archives, policies, capture bytes, execution, windows, and coverage are unchanged."
+  "execution_contract": "stash-worker-execution-v2",
+  "implementation_sha256": "c37b52eb107a4d575a911360463692c7cca67f637c94babb29cd36ccfbf7abda",
+  "decision": "contract-change",
+  "reason": "Execution v2 resumes Redgifs listing pages and durably delegates failed Reddit files to independent focused retries before completing a parent traversal. Native capabilities gate both changes. Confirmed deleted profiles receive monthly checks; explicit provider history limits remain unfinished review holds. New admissions can reuse reviewed upgraded policies while preserving original request identities. Deploy native schema 1000136 and upgrade every outbox writer and backup receipt reader before explicitly upgrading compatible queued policies to v2. Retain all unfinished ranges, original capture receipts, source media, downloader archives, and producer identities; consolidation does not turn unproved history into completed coverage."
 }

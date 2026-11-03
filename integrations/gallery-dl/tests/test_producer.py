@@ -1,18 +1,21 @@
 import hashlib
+from contextlib import closing
 from pathlib import Path
 import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 from stash_ingest.encoding import InvalidData, decode
 from stash_ingest.filesystem import Root, destination_lock
-from stash_ingest.outbox import Outbox
+from stash_ingest.outbox import Capacity, Outbox
 from stash_ingest.producer import Producer
 from stash_ingest.publication_lock import PublicationBusy
 from stash_ingest.runs import SourcePaused, SourceTurnComplete
 from stash_ingest import source
 from helpers import PRODUCER, COLLECTION, ROOT, RUN
+from helpers import receipt
 
 
 class LeaseFixture:
@@ -78,6 +81,36 @@ class ProducerTests(unittest.TestCase):
         self.box = Outbox(self.directory / "outbox.sqlite", self.lease.client.endpoint, PRODUCER)
         self.addCleanup(self.box.close)
         self.producer = Producer(self.box, self.lease, self.root, extractor_version="fixture")
+
+    def test_outbox_pressure_waits_without_a_transaction_and_resumes_after_real_ack(self):
+        self.box.max_events = 2
+        prepared = self.producer.prepare(reddit_data())
+        self.producer.backpressure = True
+        def drain(_):
+            self.assertFalse(self.box.db.in_transaction)
+            with closing(Outbox(self.box.path, self.box.endpoint, self.box.producer, create=False)) as drainer:
+                delivery, = drainer.claim(ROOT)
+                self.assertEqual(delivery.event_uuid, prepared.event_uuid)
+                drainer.acknowledge(delivery, receipt(decode(delivery.body)))
+        self.lease.stop = Mock(wait=Mock(side_effect=drain))
+        self.producer.wait_for_outbox()
+        self.lease.stop.wait.assert_called_once()
+        self.assertEqual(self.box.status()['counts']['acknowledged'], 1)
+
+    def test_outbox_pressure_is_bounded_and_keeps_pending_bytes(self):
+        self.box.max_events = 2
+        self.producer.prepare(reddit_data())
+        self.producer.backpressure = True
+        now = [0]
+        self.producer.clock = lambda: now[0]
+        def advance(_):
+            now[0] += 10
+        self.lease.stop = Mock(wait=Mock(side_effect=advance))
+        before = self.box.db.execute('SELECT body FROM events').fetchone()[0]
+        with self.assertRaises(Capacity):
+            self.producer.wait_for_outbox()
+        self.assertEqual(now[0], 30)
+        self.assertEqual(before, self.box.db.execute('SELECT body FROM events').fetchone()[0])
 
     def test_capture_precedes_file_and_current_file_can_finish_after_lease_loss(self):
         data = reddit_data()
