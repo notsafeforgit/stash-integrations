@@ -125,7 +125,8 @@ def install(target, producer, resume):
                     or not 0 <= data['pages'] <= 1000000 or not isinstance(data.get('gifs'), list)):
                 raise InvalidData('Invalid Redgifs history listing')
             empty_account = page == 1 and type(data.get('total')) is int and data['total'] == 0
-            if ((data['pages'] == 0 and data['gifs'])
+            if (('total' in data and (type(data['total']) is not int or data['total'] < 0))
+                    or (data['pages'] == 0 and (data['gifs'] or data.get('total', 0)))
                     or (page <= data['pages'] and not data['gifs'] and not empty_account)
                     or len(data['gifs']) > target.per_page
                     or ('page' in data and (type(data['page']) is not int or data['page'] != page))):

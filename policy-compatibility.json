@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v7",
-  "implementation_sha256": "f95467a4f9b596f4156c5beeee45984b233715cb4acaa2e211578889e2992015",
-  "decision": "contract-change",
-  "reason": "Execution v7 tightens Redgifs history completion: reported middle ranges still missing after filtered newest/oldest passes remain deferred instead of establishing successful full-history coverage. Existing numeric and v1 checkpoints resume unchanged; an old terminal checkpoint with a known gap cannot become success. Inconsistent listing pages fail closed. Preserve source windows, roots, initial/routine modes, producer identities, archives and schema 25. Explicitly upgrade v6 policies and deploy all writers with no active backup capture. No website backoff is cleared."
+  "implementation_sha256": "9dbd33a92dc2ba590a72342c9f8b5dd3e642d474300355668dcd9e08ee79ba08",
+  "decision": "compatible",
+  "reason": "Complete the v7 fail-closed listing validation: reject malformed totals and a positive total paired with zero pages, preserving the reviewed requirement that contradictory pagination cannot establish history completion. The execution/capture contracts, cursor encoding, source windows, run modes, producer identities, archives, schema 25 and website retry behavior are unchanged. This correction is published before deployment of the new v7 completion rule."
 }

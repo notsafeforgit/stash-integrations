@@ -152,6 +152,7 @@ class RedgifsHistoryTests(unittest.TestCase):
 
     def test_empty_or_inconsistent_claimed_pages_do_not_establish_coverage(self):
         for value in ({'pages':1,'gifs':[]}, {'pages':0,'gifs':[{}]},
+                      {'pages':0,'gifs':[],'total':10}, {'pages':0,'gifs':[],'total':False},
                       {'pages':1,'gifs':[{}],'page':2}, {'pages':1,'gifs':[{}],'page':True}):
             with self.subTest(value=value):
                 self.target.api._call = lambda *_: value
