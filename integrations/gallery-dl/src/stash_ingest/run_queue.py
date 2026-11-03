@@ -279,7 +279,7 @@ def submit_once(queue, client, *, owner=None):
                 and capabilities.get('source_run_compatible_admission_protocol') != 1):
             raise Unavailable('native_compatible_admission_unavailable')
         if (decode(delivery.body).get('attachment_retry_event_uuid')
-                and capabilities.get('source_run_attachment_retry_protocol') != 1):
+                and capabilities.get('source_run_attachment_retry_protocol') != 2):
             raise Unavailable('native_attachment_retry_unavailable')
         if (decode(delivery.body)['window'].get('basis') == 'traversal'
                 and capabilities.get('source_run_traversal_protocol') != 1):

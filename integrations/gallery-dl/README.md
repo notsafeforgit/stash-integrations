@@ -3625,18 +3625,20 @@ see the [release compatibility review](../../README.md#worker-compatibility-revi
 Reddit posts linking to individual Imgur or Redgifs items no longer hold a full
 account scrape when the exact item API repeatedly returns 404 or 410. The adapter
 makes at most three item requests, respecting the existing shared request budget.
-It saves observations in the producer outbox and retains a permanent skip for
-that service/item. A later traversal or worker restart reuses the decision. A
-success before the limit clears the failed observations. Explicit Redgifs deletion
-responses retain their existing handling.
+It saves temporary observations in the producer outbox. Once all attachments in
+the post are fetched or terminally unavailable, execution v3 records post completion
+in the configured gallery-dl archive and removes the temporary observations.
+A success before the limit clears the failed observations. Missing-media caches
+older than 48 hours are pruned when a Reddit worker starts.
 
-Skipped items retain their source capture, `native_media_status` with the reason
-and attempt count, and a failed attachment transfer. They never enter the successful
-download archive or produce a completed file event. Available Reddit previews can
-still be downloaded. Account/listing requests, unrelated API endpoints, authentication,
+Execution v3 does not create a permanent missing-file ledger or new
+`native_media_status` capture for these decisions. The post completion entry means
+processing finished; it never creates a completed file event or a successful file
+archive entry for absent bytes. Available Reddit previews can still be downloaded.
+Account/listing requests, unrelated API endpoints, authentication,
 rate limits, network errors and server errors do not qualify for this skip.
 
-Producer schema 19 stores these decisions in the same database as jobs and
+Historically, producer schema 19 stored these decisions in the same database as jobs and
 receipts. Its atomic migration imports v0.3's adjacent `.missing-media.sqlite`
 file once, checking the original producer binding and preserving every observation.
 The upgrade-only reader leaves that file unchanged; schema-19 workers never read

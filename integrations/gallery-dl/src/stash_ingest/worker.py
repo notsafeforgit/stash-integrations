@@ -117,7 +117,7 @@ def execute(box, client, configuration, run_uuid):
             or 'account.profile' not in capabilities.get('kinds', [])
             or capabilities.get('max_account_profile_bytes', 0) < 128 << 10):
         raise InvalidData('Reddit profile observations require an updated Stash server')
-    if configuration.source_category == 'reddit' and capabilities.get('source_run_attachment_retry_protocol') != 1:
+    if configuration.source_category == 'reddit' and capabilities.get('source_run_attachment_retry_protocol') != 2:
         raise Unavailable('native_attachment_retry_unavailable')
     if configuration.source_category == 'redgifs' and capabilities.get('source_run_redgifs_pagination_protocol') != 1:
         raise Unavailable('native_redgifs_pagination_unavailable')
@@ -144,6 +144,11 @@ def execute(box, client, configuration, run_uuid):
             expected_basis = 'traversal' if configuration.source_mode == 'traversal' else ''
             if (lease.run.get('window') or {}).get('basis', '') != expected_basis:
                 raise InvalidData('Claimed source coverage differs from the reviewed worker mode')
+            # Renewals deliberately omit the retained payload; keep this owned
+            # claim's archive context before starting the heartbeat thread.
+            retry = lease.run.get('attachment_retry', False)
+            finalize = lease.run.get('attachment_retry_finalize', False)
+            retry_source = lease.run.get('attachment_retry_source')
             lease.start()
             delivery.start()
 
@@ -154,12 +159,27 @@ def execute(box, client, configuration, run_uuid):
             producer = Producer(box, lease, configuration.root, extractor_version=version.__version__,
                                 configuration_check=check_configuration, source_category=configuration.source_category,
                                 scan_mode=configuration.scan_mode, attachment_retries=configuration.source_category == 'reddit')
-            target = lease.run["target_url"]
-            if configuration.source_adapter == 'yt-dlp':
-                from gallery_dl.extractor.ytdl import YoutubeDLExtractor
-                target = YoutubeDLExtractor.from_url('ytdl:' + target)
-            task = NativeDownloadJob(target, producer=producer, lock_directory=configuration.locks.path)
-            status = task.run()
+            from .post_archive import retry_archive
+            from .publication_lock import publication_lock
+            with publication_lock(configuration.locks.path, producer.check):
+                archived = retry and retry_archive(producer, retry_source, finish=finalize)
+            if archived:
+                status = 0
+            else:
+                target = lease.run["target_url"]
+                if configuration.source_adapter == 'yt-dlp':
+                    from gallery_dl.extractor.ytdl import YoutubeDLExtractor
+                    target = YoutubeDLExtractor.from_url('ytdl:' + target)
+                task = NativeDownloadJob(target, producer=producer, lock_directory=configuration.locks.path)
+                status = task.run()
+                if retry and status == 0:
+                    if task._native_post is None or not task._native_post.already:
+                        # An empty or incomplete response is not proof that all
+                        # gallery members finished. Keep the bounded retry.
+                        status = 4
+                    else:
+                        with publication_lock(configuration.locks.path, producer.check):
+                            retry_archive(producer, retry_source, finish=True)
             producer.check()
             if status == 0:
                 outcome, error = "succeeded", ""

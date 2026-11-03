@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v2",
-  "implementation_sha256": "c37b52eb107a4d575a911360463692c7cca67f637c94babb29cd36ccfbf7abda",
+  "execution_contract": "stash-worker-execution-v3",
+  "implementation_sha256": "ab6c981f4a26058ba101187a267a5b3ff85fcb42a95b27b38f5dc4953d15094f",
   "decision": "contract-change",
-  "reason": "Execution v2 resumes Redgifs listing pages and durably delegates failed Reddit files to independent focused retries before completing a parent traversal. Native capabilities gate both changes. Confirmed deleted profiles receive monthly checks; explicit provider history limits remain unfinished review holds. New admissions can reuse reviewed upgraded policies while preserving original request identities. Deploy native schema 1000136 and upgrade every outbox writer and backup receipt reader before explicitly upgrading compatible queued policies to v2. Retain all unfinished ranges, original capture receipts, source media, downloader archives, and producer identities; consolidation does not turn unproved history into completed coverage."
+  "reason": "Execution v3 finalizes exhausted Reddit retries in the existing downloader archive without further website requests, distinguishes whole-post processing completion from successful file transfers, and retires retry-only native state and transient missing-media caches. Deploy native schema 1000137 / attachment retry protocol 2 plus every shared-outbox writer and backup reader together. Explicitly upgrade reviewed v1/v2 queued policies to v3 after active backups finish, preserving original requests, unfinished ranges, checkpoints, producer identities, archives and actual receipt history. Producer schema remains 24; ordinary gallery-dl file archive keys remain truthful."
 }
