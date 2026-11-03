@@ -64,6 +64,15 @@ class RunLeaseTests(unittest.TestCase):
         with self.assertRaises(SourcePaused):
             self.lease.check()
 
+    def test_explicit_redgifs_deletion_acknowledges_retirement_without_success(self):
+        self.lease._accept(self.response())
+        self.client._request.return_value = (dict(self.run, state='cancelled'), None, 0)
+        result = self.lease.finish('deferred', error_code='account_deleted', error_scope='service:redgifs')
+        self.assertEqual(result['state'], 'cancelled')
+        body = decode(self.client._request.call_args.args[2])
+        self.assertEqual(body['outcome']['state'], 'deferred')
+        self.assertEqual(body['outcome']['error_code'], 'account_deleted')
+
     def test_outage_fence_or_definition_change_pauses_source_work(self):
         for changed in ({"fence": 4}, {"collection_revision": 2}, {"owner_uuid": PRODUCER}, {"state": "queued"},
                         {"target_url": "https://fixture.invalid/other"}, {"path_prefix": "Other"}):

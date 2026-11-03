@@ -12,6 +12,7 @@ from stash_ingest.client import drain_once
 from stash_ingest.encoding import InvalidData, decode
 from stash_ingest.outbox import Outbox
 from stash_ingest.source_window import SourceWindow
+from stash_ingest.runs import SourceFailure
 import test_gallery
 from test_producer import reddit_data
 
@@ -98,6 +99,20 @@ class ProfileGalleryTests(unittest.TestCase):
         x.log.warning.assert_called_once()
         self.producer.observe_profile({'category': 'reddit', 'user': user})
         self.assertEqual(len(self.events(kinds=('account.profile',))), 1)
+
+    def test_suspended_or_missing_profile_is_not_a_metadata_configuration_failure(self):
+        self.lease.reserve_source = Mock(return_value='service:reddit')
+        for user, code in (({'is_suspended': True}, 'account_suspended'), ({}, 'account_not_found')):
+            with self.subTest(code=code), patch.object(RedditAPI, 'user_about', return_value=user), \
+                    patch.object(RedditAPI, 'submissions_user', return_value=iter(())), \
+                    patch.object(reddit_profile, 'refresh') as refresh:
+                self.producer.source_failure = None
+                with self.assertRaises(SourceFailure) as raised:
+                    self.task(fixture=RedditUserExtractor).run()
+                self.assertEqual(raised.exception.code, code)
+                self.assertEqual(raised.exception.scope, 'service:reddit')
+                refresh.assert_not_called()
+        self.assertEqual(self.events(kinds=('account.profile',)), [])
 
     def test_filtered_posts_and_archive_overlap_still_refresh_profile(self):
         response = Mock(status_code=200, text=profile_html())

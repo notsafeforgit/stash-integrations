@@ -47,6 +47,20 @@ class SourceSession:
     def __getattr__(self, name):
         return getattr(self.session, name)
 
+    def _deleted_redgifs_profile(self, requested):
+        from urllib.parse import urlsplit
+        run = getattr(getattr(self.producer, 'lease', None), 'run', None)
+        if not isinstance(run, dict) or run.get('operation') != 'download' or run.get('attachment_retry'):
+            return False
+        target = urlsplit(run.get('target_url', ''))
+        profile = re.fullmatch(r'/users/([A-Za-z0-9_-]{1,256})/?', target.path)
+        listing = re.fullmatch(r'/v2/users/([A-Za-z0-9_-]{1,256})/search', requested.path)
+        return bool(profile and listing and profile[1].lower() == listing[1].lower()
+                    and target.scheme in ('http', 'https') and target.hostname in ('redgifs.com', 'www.redgifs.com')
+                    and target.username is None and target.port is None and not target.query and not target.fragment
+                    and requested.scheme == 'https' and requested.username is None and requested.port is None
+                    and not requested.fragment)
+
     def request(self, *args, **kwargs):
         self.producer.check()
         url = args[1] if len(args) >= 2 else kwargs.get("url")
@@ -74,7 +88,8 @@ class SourceSession:
                                 for key in ('message', 'description') if isinstance(item.get(key), str)]
                     if 'User account deleted.' in messages:
                         response.close()
-                        self.producer.fail_source('not_found', scope)
+                        code = 'account_deleted' if self._deleted_redgifs_profile(parsed) else 'not_found'
+                        self.producer.fail_source(code, scope)
                     if any(re.fullmatch(r'Page number must be between 1 and [1-9][0-9]*', value) for value in messages):
                         response.close()
                         self.producer.fail_source('source_history_limit', scope)
@@ -424,7 +439,8 @@ class NativeDownloadJob(job.DownloadJob):
             elif isinstance(exc, exception.ChallengeError):
                 code = "challenge"
             elif isinstance(exc, exception.NotFoundError) or getattr(exc, "status", None) == 404:
-                code = "not_found"
+                from .account_errors import missing_code
+                code = missing_code(self.extractor, exc)
             elif isinstance(exc, requests.exceptions.Timeout):
                 code = "timeout"
             elif getattr(exc, "status", None) == 429:

@@ -224,6 +224,12 @@ def install(extractor, producer):
     def submissions(self):
         result = original()  # user_about runs before listing iteration, even if empty.
         user = self.kwdict.get('user')
+        if isinstance(user, dict) and user.get('is_suspended') is True:
+            # Profile observation must not turn gallery-dl's explicit account
+            # state into a generic invalid-metadata failure before iteration.
+            raise exception.NotFoundError('Suspended User', False)
+        if isinstance(user, dict) and 'id' not in user:
+            raise exception.NotFoundError('user')
         identity(user)
         user = refresh(self, producer, user)
         self.kwdict['user'] = user
