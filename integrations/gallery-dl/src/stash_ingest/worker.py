@@ -141,6 +141,7 @@ def execute(box, client, configuration, run_uuid):
         if lease is None:
             return {"state": "waiting", "run_uuid": run_uuid}
         outcome, error, result = "deferred", "worker_execution_failed", None
+        producer = None
         error_scope = ""
         try:
             if lease.run.get("root_uuid") != configuration.root_uuid or lease.run.get("operation") != "download":
@@ -249,6 +250,8 @@ def execute(box, client, configuration, run_uuid):
                     if result is not None:
                         result["heartbeat_error"] = "heartbeat_still_stopping"
         result["outbox"] = box.status()
+        if hasattr(producer, 'redgifs_history_coverage'):
+            result['history_coverage'] = producer.redgifs_history_coverage
         if result["state"] == "retry" and error == "source_turn_complete":
             result["state"] = "yielded"
         if error_scope:

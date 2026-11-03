@@ -15,10 +15,13 @@ def chronological(target, producer):
         # Stories are oldest first and highlight containers can gain items.
         # Neither can stop at an archived item. Only the profile post feed can.
         return target.subcategory in ('posts', 'photos')
+    if target.category == 'redgifs':
+        return (target.subcategory == 'user'
+                and parse_qs(urlsplit(target.url).query).get('order', ['new']) == ['new'])
     return False
 
 
-def posts(iterator, producer, category, *, resume_scope=True):
+def posts(iterator, producer, category, *, resume_scope=True, manifest=None):
     previous = None
     for entry in iterator:
         data = entry[0] if category == 'reddit' else entry
@@ -42,10 +45,12 @@ def posts(iterator, producer, category, *, resume_scope=True):
         producer.routine_post_archived = False
         producer.routine_post_attachments = set()
         yield entry
-        if (not pinned and not replaying and (not resume_scope or not producer.resume_cursor)
+        if (not pinned and not replaying and not getattr(producer, 'redgifs_history_expanding', False)
+                and (not resume_scope or not producer.resume_cursor)
                 and (producer.routine_post_archived or
                      (producer.routine_post_items and not producer.routine_post_new
-                      and complete_manifest(data, category, producer.routine_post_attachments)))):
+                      and (manifest(data, producer.routine_post_attachments) if manifest else
+                           complete_manifest(data, category, producer.routine_post_attachments))))):
             return
 
 
@@ -118,6 +123,33 @@ def install(target, producer):
         saved = producer.saved_pagination
         resume_scope = saved is None or (saved['extractor'], saved['url']) == ('instagram:' + target.subcategory, target.url)
         target.posts = lambda: posts(original(), producer, 'instagram', resume_scope=resume_scope)
+    elif target.category == 'redgifs':
+        original, gallery = target.gifs, target.api.gallery
+        current = {}
+
+        def listing():
+            for data in original():
+                current.clear()
+                current['post'] = data
+                yield data
+
+        def gallery_members(identity):
+            result = gallery(identity)
+            data = current.get('post')
+            if isinstance(data, dict) and data.get('gallery') == identity:
+                current['members'] = result.get('gifs') if isinstance(result, dict) else None
+            return result
+
+        def complete(data, downloaded):
+            members = current.get('members') if data.get('gallery') else [data]
+            if not isinstance(members, list) or not members:
+                return False
+            from .redgifs import post
+            return all(isinstance(member, dict) and ('native:redgifs', post(member)['value']) in downloaded
+                       for member in members)
+
+        target.api.gallery = gallery_members
+        target.gifs = lambda: posts(listing(), producer, 'redgifs', manifest=complete)
     else:
         original = target.submissions
         target.submissions = lambda: posts(original(), producer, 'reddit')

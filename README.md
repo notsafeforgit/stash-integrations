@@ -156,3 +156,23 @@ preserves every receipt; only the explicit verified retention pass compacts them
 Backup verification rejects compact proofs with missing or changed native receipts.
 Compaction frees SQLite pages for reuse; reclaiming the physical file size requires
 a separate coordinated SQLite compaction while writers are stopped.
+
+Release v0.6.26 introduces execution contract v5. An explicitly reviewed Redgifs
+profile can set `extractor.redgifs.user.native-history-limit` to `available`.
+After an explicit page-limit response, that traversal tries separate image and
+video feeds and the oldest-first end of feeds that exceed the ceiling. Saved
+page checkpoints retain the remaining passes across interruptions. Finishing
+means all history available through those feeds, with any inaccessible middle
+range identified in `history_coverage` in the worker result. HTTP 429, temporary
+errors, missing accounts, and malformed responses still require their normal
+retry or retirement handling. The setting accepts unfiltered user profiles and
+cannot be used for recovery replay.
+
+Redgifs profiles with `scan_mode: routine` stop after a wholly downloaded post;
+gallery members must all be accounted for before that boundary can end a scan.
+Use a separate routine profile for future checks. Keep unfinished initial crawls
+on their initial profile so an archived post cannot hide remaining history.
+Deploy v5 through explicit policy upgrades while workers are quiesced and no
+backup captures configuration; retain producer identities, source windows,
+archives and saved page progress. Do not reinterpret retained v4 admissions
+without that review. Producer schema 25 is unchanged.

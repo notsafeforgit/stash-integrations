@@ -90,9 +90,10 @@ class SourceSession:
                         response.close()
                         code = 'account_deleted' if self._deleted_redgifs_profile(parsed) else 'not_found'
                         self.producer.fail_source(code, scope)
-                    if any(re.fullmatch(r'Page number must be between 1 and [1-9][0-9]*', value) for value in messages):
-                        response.close()
-                        self.producer.fail_source('source_history_limit', scope)
+                    for value in messages:
+                        if match := re.fullmatch(r'Page number must be between 1 and ([1-9][0-9]{0,6})', value):
+                            response.close()
+                            self.producer.fail_source('source_history_limit', scope, page_limit=int(match[1]))
         from .request_budget import network_security
         if response.status_code == 429 or network_security(response, scope):
             response.close()
@@ -425,6 +426,7 @@ class NativeDownloadJob(job.DownloadJob):
         elif self.extractor.category == 'redgifs' and self._native_parent is None:
             from . import pagination
             pagination.install(self.extractor, self.producer)
+            recent.install(self.extractor, self.producer)
 
     def _source_operation(self, call, *args):
         try:

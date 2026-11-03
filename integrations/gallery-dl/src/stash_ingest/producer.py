@@ -116,10 +116,10 @@ class Producer:
             if now >= self.resumed_work_deadline:
                 raise SourceTurnComplete("Resumed source time budget reached; checkpointing for the next turn")
 
-    def fail_source(self, code, scope):
+    def fail_source(self, code, scope, *, page_limit=None):
         self.check(turn=False)
         if self.source_failure is None:
-            self.source_failure = SourceFailure(code, scope)
+            self.source_failure = SourceFailure(code, scope, page_limit=page_limit)
         raise self.source_failure from None
 
     def reserve_source(self, url):

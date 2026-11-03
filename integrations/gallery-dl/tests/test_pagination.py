@@ -6,7 +6,7 @@ from gallery_dl import config, extractor
 from gallery_dl.extractor import instagram, reddit, twitter, redgifs
 from stash_ingest import pagination, recent
 from stash_ingest.producer import Producer
-from stash_ingest.runs import SourcePaused
+from stash_ingest.runs import SourceFailure, SourcePaused
 from stash_ingest.source_window import SourceWindow
 import test_producer
 from test_producer import reddit_data
@@ -58,6 +58,30 @@ class PaginationTests(unittest.TestCase):
             list(target.gifs())
         self.assertEqual(producer.pagination, {**page, 'item': anchor})
         self.assertEqual(producer.resume_cursor, anchor)
+
+    def test_available_history_upgrades_exact_legacy_page_and_retains_native_coverage_note(self):
+        from stash_ingest import redgifs_history
+        config.clear()
+        self.addCleanup(config.clear)
+        config.set(('extractor', 'redgifs', 'user'), 'native-history-limit', 'available')
+        target = redgifs.RedgifsUserExtractor.from_url('https://www.redgifs.com/users/example')
+        target.initialize()
+        page = {'extractor': 'redgifs:user', 'url': target.url, 'cursor': '101', 'item': ''}
+        producer, _ = self.resumed(page)
+        calls = []
+        def call(endpoint, params):
+            calls.append(dict(params))
+            if params['page'] == 101:
+                producer.fail_source('source_history_limit', 'service:redgifs', page_limit=100)
+            return {'gifs': [], 'pages': 1}
+        target.api._call = call
+        pagination.install(target, producer)
+        self.assertEqual(list(target.gifs()), [])
+        producer.traversed()
+        saved = redgifs_history.decode(self.lease.pages[-1]['cursor'])
+        self.assertEqual(saved, dict(phase=5, page=1, limit=100, images=1, videos=1))
+        self.assertEqual([r['page'] for r in calls], [101, 1, 1])
+        self.assertFalse(producer.resume_cursor)
 
     def test_partial_page_keeps_checkpoint_on_http_retry_then_advances(self):
         producer, anchor = self.resumed(PAGE)

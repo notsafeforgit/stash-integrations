@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v4",
-  "implementation_sha256": "cd09191170b3ccbe921aef0f7624f7331bfd898b296fd521d3d27be132568428",
-  "decision": "compatible",
-  "reason": "Execution v4 and producer schema 25 remain unchanged. Resolve compact parent receipts through the actual drainer client before the acknowledgement write transaction, then revalidate the delivery lease and fence. Transient lookup failures retain the original report for retry; changed receipts still require review. This repairs late child acknowledgements without changing coverage, cursor semantics, event identities or persisted proof format. Deploy every shared writer and archive reader together before the first compaction pass; native receipts, archives and pending payloads stay intact."
+  "execution_contract": "stash-worker-execution-v5",
+  "implementation_sha256": "5bea9a5ea17f054e277a6d2a2f91d9ae807fa522aa31e6ff4cb1e64ee61d5f17",
+  "decision": "contract-change",
+  "reason": "Execution v5 adds explicitly opted-in available-history Redgifs traversal: after a confirmed provider page ceiling, try image/video and oldest-first feeds, preserve filtered page progress, and accept any remaining inaccessible middle only under the reviewed profile. Routine Redgifs checks stop at whole downloaded posts, including every gallery member. Existing v4 admissions require explicit policy upgrades; keep unfinished initial crawls initial and select a separate routine profile for future checks. All retries, shared pacing, producer identities, archive files, outboxes and schema 25 remain intact. Deploy shared writers together while quiesced with no active backup capture."
 }

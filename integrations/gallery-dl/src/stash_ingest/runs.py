@@ -28,12 +28,16 @@ def source_scope(value):
 class SourceFailure(RuntimeError):
     """A controlled service failure without website responses or private URLs."""
 
-    def __init__(self, code, scope):
+    def __init__(self, code, scope, *, page_limit=None):
         if code not in {"source_busy", "rate_limited", "timeout", "extraction_failed", "authentication",
                         "access_denied", "challenge", "not_found", "source_history_limit", "account_deleted",
                         "account_suspended", "account_deactivated", "account_unavailable", "account_not_found"} or not source_scope(scope):
             raise InvalidData("Invalid source failure attribution")
         self.code, self.scope = code, scope
+        if page_limit is not None and (code != 'source_history_limit' or scope != 'service:redgifs'
+                or type(page_limit) is not int or not 1 <= page_limit <= 1000000):
+            raise InvalidData('Invalid provider history limit')
+        self.page_limit = page_limit
         super().__init__(code + " (" + scope + ")")
 
 

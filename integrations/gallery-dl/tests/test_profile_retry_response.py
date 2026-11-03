@@ -25,14 +25,15 @@ class ProfileRetryResponseTests(unittest.TestCase):
                 producer = Mock()
                 producer.lease.run = {'operation': 'download', 'target_url': 'https://www.redgifs.com/users/Example'}
                 producer.request_source.return_value = {'source_scope': 'service:redgifs'}
-                def fail(code, scope):
-                    raise SourceFailure(code, scope)
+                def fail(code, scope, **details):
+                    raise SourceFailure(code, scope, **details)
                 producer.fail_source.side_effect = fail
                 session = SourceSession(producer, Mock(request=Mock(return_value=response)))
                 if expected:
                     with self.assertRaises(SourceFailure) as raised:
                         session.request('GET', url)
                     self.assertEqual(raised.exception.code, expected)
+                    self.assertEqual(raised.exception.page_limit, 100 if expected == 'source_history_limit' else None)
                     response.close.assert_called_once()
                 else:
                     self.assertIs(session.request('GET', url), response)
