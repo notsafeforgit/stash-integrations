@@ -144,6 +144,46 @@ class RedgifsGalleryTests(unittest.TestCase):
             self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
         self.assertEqual([c['post']['value'] for c in self.events(kinds=('source.capture',))], ['secondclip'])
 
+    def test_routine_stops_at_wholly_archived_post_before_next_page(self):
+        with patch.object(RedgifsAPI, 'user', return_value=iter([item()])):
+            self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
+        self.producer.scan_mode = 'routine'
+        def listing(*_):
+            yield item()
+            self.fail('An archived chronological boundary must stop before the next listing request')
+        with patch.object(RedgifsAPI, 'user', side_effect=listing):
+            self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
+
+    def test_routine_finishes_every_gallery_member_before_stopping(self):
+        with patch.object(RedgifsAPI, 'user', return_value=iter([item()])):
+            self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
+        self.producer.scan_mode = 'routine'
+        first, second = item(gallery='gallery-id'), item('SecondClip', gallery='gallery-id')
+        visited = []
+        def listing(*_):
+            visited.append('gallery')
+            yield copy.deepcopy(first)
+            visited.append('older')
+            yield item('OlderClip')
+        with patch.object(RedgifsAPI, 'user', side_effect=listing), \
+                patch.object(RedgifsAPI, 'gallery', side_effect=lambda *_: {'gifs': copy.deepcopy([first, second])}):
+            self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
+            self.assertEqual(visited, ['gallery', 'older'], 'a newly fetched member is not an old-post boundary')
+            visited.clear()
+            self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
+            self.assertEqual(visited, ['gallery'])
+        self.assertTrue((self.media / 'Account' / 'SecondClip.mp4').is_file())
+
+    def test_routine_does_not_stop_at_a_silently_omitted_gallery_member(self):
+        with patch.object(RedgifsAPI, 'user', return_value=iter([item()])):
+            self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
+        self.producer.scan_mode = 'routine'
+        first, unavailable = item(gallery='gallery-id'), item('MissingClip', gallery='gallery-id', urls={})
+        with patch.object(RedgifsAPI, 'user', return_value=iter([first, item('OlderClip')])), \
+                patch.object(RedgifsAPI, 'gallery', return_value={'gifs': [first, unavailable]}):
+            self.assertEqual(self.task(fixture=RedgifsUserExtractor).run(), 0)
+        self.assertTrue((self.media / 'Account' / 'OlderClip.mp4').is_file())
+
 
 if __name__ == '__main__':
     unittest.main()

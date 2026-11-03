@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v4",
-  "implementation_sha256": "cd09191170b3ccbe921aef0f7624f7331bfd898b296fd521d3d27be132568428",
-  "decision": "compatible",
-  "reason": "Execution v4 and producer schema 25 remain unchanged. Resolve compact parent receipts through the actual drainer client before the acknowledgement write transaction, then revalidate the delivery lease and fence. Transient lookup failures retain the original report for retry; changed receipts still require review. This repairs late child acknowledgements without changing coverage, cursor semantics, event identities or persisted proof format. Deploy every shared writer and archive reader together before the first compaction pass; native receipts, archives and pending payloads stay intact."
+  "execution_contract": "stash-worker-execution-v6",
+  "implementation_sha256": "30291711032f93beca30aa6c36c00eca841742c010952a178cf81e3fd71c9340",
+  "decision": "contract-change",
+  "reason": "Execution v6 preserves the v5 opt-in bounded Redgifs feeds and adds initial-history protection for future routine jobs. A routine Redgifs admission completes an initial pass until native successful full-history coverage exists for the same collection and root. Embedded downloaded files alone never establish coverage. Explicitly upgrade retained policies, keep current initial crawls initial, and select the routine profile for future scheduling. No producer identity, source window, pending delivery, archive, path or schema 25 change. Deploy every writer together with no active backup capture."
 }

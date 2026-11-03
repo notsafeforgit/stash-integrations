@@ -40,6 +40,10 @@ def install(target, producer):
     if target.category == 'redgifs':
         if target.subcategory != 'user' or not hasattr(target, 'api'):
             return
+        if target.config('native-history-limit') == 'available':
+            from . import redgifs_history
+            redgifs_history.install(target, producer, resume)
+            return
         original_call = target.api._call
         first = True
 
