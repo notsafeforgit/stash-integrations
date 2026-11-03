@@ -136,10 +136,12 @@ def drain_once(outbox, client, *, owner=None):
 
     def acknowledge(delivery, receipt):
         try:
-            outbox.acknowledge(delivery, receipt)
+            outbox.acknowledge(delivery, receipt, receipt_lookup=getattr(client, "receipt", None))
             counts["acknowledged"] += 1
         except LeaseLost:
             counts["lease_lost"] += 1
+        except Unavailable as exc:
+            fail(delivery, exc.code, exc.status in {400, 403, 404, 409, 413, 422}, exc.retry_after)
         except InvalidData:
             fail(delivery, "receipt_mismatch", True)
 

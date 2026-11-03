@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v4",
-  "implementation_sha256": "f806287c50a55a0c15832a2d957983e574c9ff6af7817bcfca7496bfa2c4cb22",
+  "implementation_sha256": "cd09191170b3ccbe921aef0f7624f7331bfd898b296fd521d3d27be132568428",
   "decision": "compatible",
-  "reason": "Execution v4 coverage, cursor semantics, admitted requests and event identities are unchanged. Producer schema 25 can replace verified old acknowledgement JSON with 37-byte receipt proofs even inside unfinished crawls; pending payloads and dependency rows remain. Native receipt lookup validates the proof and keeps only a bounded memory cache. Deploy all shared-outbox writers and archive readers together after active backups finish. The migration retains full receipts until verified retention runs; older clients reject schema 25. No source-policy upgrade is required."
+  "reason": "Execution v4 and producer schema 25 remain unchanged. Resolve compact parent receipts through the actual drainer client before the acknowledgement write transaction, then revalidate the delivery lease and fence. Transient lookup failures retain the original report for retry; changed receipts still require review. This repairs late child acknowledgements without changing coverage, cursor semantics, event identities or persisted proof format. Deploy every shared writer and archive reader together before the first compaction pass; native receipts, archives and pending payloads stay intact."
 }
