@@ -157,13 +157,17 @@ Backup verification rejects compact proofs with missing or changed native receip
 Compaction frees SQLite pages for reuse; reclaiming the physical file size requires
 a separate coordinated SQLite compaction while writers are stopped.
 
-Release v0.6.27 introduces execution contract v6. An explicitly reviewed Redgifs
+Release v0.6.28 introduces execution contract v7. An explicitly reviewed Redgifs
 profile can set `extractor.redgifs.user.native-history-limit` to `available`.
 After an explicit page-limit response, that traversal tries separate image and
 video feeds and the oldest-first end of feeds that exceed the ceiling. Saved
 page checkpoints retain the remaining passes across interruptions. Finishing
-means all history available through those feeds, with any inaccessible middle
-range identified in `history_coverage` in the worker result. HTTP 429, temporary
+requires those checked ranges to cover every reported page. A remaining middle
+range is identified in `history_coverage` and keeps the run deferred with
+`source_history_limit`: a provider ceiling is not proof that another supported
+listing cannot expose more posts. Replaying an older terminal checkpoint with
+such a gap also stays unfinished. Inconsistent empty or mismatched pages cannot
+establish completion. HTTP 429, temporary
 errors, missing accounts, and malformed responses still require their normal
 retry or retirement handling. The setting accepts unfiltered user profiles and
 cannot be used for recovery replay.
@@ -176,7 +180,7 @@ New accounts admitted by the routine scheduler first complete a historical pass:
 only a successful native run covering history for the same collection and root
 allows a later run to stop at the archive boundary. Previously embedded files
 alone cannot establish that baseline.
-Deploy v6 through explicit policy upgrades while workers are quiesced and no
+Deploy v7 through explicit policy upgrades while workers are quiesced and no
 backup captures configuration; retain producer identities, source windows,
-archives and saved page progress. Do not reinterpret retained v4/v5 admissions
+archives and saved page progress. Do not reinterpret retained v4/v5/v6 admissions
 without that review. Producer schema 25 is unchanged.

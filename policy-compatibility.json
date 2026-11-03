@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v6",
-  "implementation_sha256": "30291711032f93beca30aa6c36c00eca841742c010952a178cf81e3fd71c9340",
+  "execution_contract": "stash-worker-execution-v7",
+  "implementation_sha256": "f95467a4f9b596f4156c5beeee45984b233715cb4acaa2e211578889e2992015",
   "decision": "contract-change",
-  "reason": "Execution v6 preserves the v5 opt-in bounded Redgifs feeds and adds initial-history protection for future routine jobs. A routine Redgifs admission completes an initial pass until native successful full-history coverage exists for the same collection and root. Embedded downloaded files alone never establish coverage. Explicitly upgrade retained policies, keep current initial crawls initial, and select the routine profile for future scheduling. No producer identity, source window, pending delivery, archive, path or schema 25 change. Deploy every writer together with no active backup capture."
+  "reason": "Execution v7 tightens Redgifs history completion: reported middle ranges still missing after filtered newest/oldest passes remain deferred instead of establishing successful full-history coverage. Existing numeric and v1 checkpoints resume unchanged; an old terminal checkpoint with a known gap cannot become success. Inconsistent listing pages fail closed. Preserve source windows, roots, initial/routine modes, producer identities, archives and schema 25. Explicitly upgrade v6 policies and deploy all writers with no active backup capture. No website backoff is cleared."
 }
