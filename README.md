@@ -120,7 +120,7 @@ upgrade and wait for active backup captures to finish before changing captured
 runtime configuration. Vanilla gallery-dl does not interpret the adapter's post
 completion entries; keep using the native adapter for these managed jobs.
 
-Release v0.6.22 introduces execution contract v4 (producer schema stays 24).
+Release v0.6.23 introduces execution contract v4 (producer schema stays 24).
 An explicit `User account deleted.` response from the claimed Redgifs account's
 listing retires that source and cancels its remaining work without marking it
 successfully downloaded. The native server preserves captures, media, archives,
