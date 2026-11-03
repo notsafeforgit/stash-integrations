@@ -14,7 +14,7 @@ from stash_ingest.outbox import Conflict, Outbox
 from stash_ingest.outbox_history import apply, finish_retirement, inspect
 
 
-class HistoryTests(unittest.TestCase):
+class HistoryFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -64,6 +64,8 @@ class HistoryTests(unittest.TestCase):
             raise Unavailable('http_error', 404)
         return self.receipts[event_uuid]
 
+
+class HistoryTests(HistoryFixture):
     def test_verified_history_is_removed_and_sequence_survives_empty_queue_and_reopen(self):
         source = capture()
         self.accept(source)

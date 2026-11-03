@@ -1,11 +1,13 @@
 """Retire verified delivery history of terminal source runs, retaining compact proofs.
 
-The native library owns accepted receipts. Unfinished runs and every unresolved
-event remain in the producer. No network request runs inside a SQLite transaction.
+The native library owns accepted receipts. Unfinished runs keep event identities
+and unresolved payloads; old acknowledgements may be compacted separately. No
+network request runs inside a SQLite transaction.
 """
 
 import argparse
 from collections import defaultdict
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import itertools
@@ -13,6 +15,7 @@ import json
 from pathlib import Path
 import sqlite3
 import time
+from types import SimpleNamespace
 
 from .encoding import InvalidData, decode, encode, identifier
 
@@ -97,7 +100,7 @@ def inspect(queue, library, endpoint, *, keep_days=1, now=None):
     now = time.time() if now is None else now
     cutoff = now - keep_days * 86400
     if (queue.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
-            or queue.execute("PRAGMA user_version").fetchone()[0] not in range(16, 25)):
+            or queue.execute("PRAGMA user_version").fetchone()[0] not in range(16, 26)):
         raise InvalidData("Unsupported producer history version")
     binding = queue.execute("SELECT endpoint,producer FROM binding WHERE id=1").fetchone()
     if binding is None or origin(binding["endpoint"]) != origin(endpoint):
@@ -144,11 +147,15 @@ def inspect(queue, library, endpoint, *, keep_days=1, now=None):
         candidate = candidates[run_uuid]
         digest, count, receipt_bytes = hashlib.sha256(), 0, 0
         for row in records:
-            saved = receipt_record(decode(row["receipt"], 65536))
-            expected = {key: row[key] for key in ("event_uuid", "sha256", "collection_uuid", "collection_revision",
-                                                 "root_uuid", "run_uuid", "kind")}
-            if saved["producer_uuid"] != producer or any(saved[k] != v for k, v in expected.items()):
-                raise InvalidData("Local acknowledgement differs from its event")
+            from .receipt_proofs import is_compact, native_record, retained_record
+            server = None
+            if is_compact(row["receipt"]):
+                if queue.execute("PRAGMA user_version").fetchone()[0] < 25:
+                    raise InvalidData("Compact acknowledgement requires producer schema 25")
+                server = native_record(library.execute(
+                    "SELECT * FROM ingest_receipts WHERE producer_uuid=? AND event_uuid=?",
+                    (producer, row["event_uuid"])).fetchone())
+            saved = retained_record(row, producer, server)
             if row["parent_uuid"] is not None:
                 parent = queue.execute("SELECT run_uuid,seq,state FROM events WHERE event_uuid=?", (row["parent_uuid"],)).fetchone()
                 if parent is None or parent["run_uuid"] != run_uuid or parent["seq"] >= row["seq"] or parent["state"] != "acknowledged":
@@ -224,25 +231,38 @@ def main():
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--keep-days", type=int, default=1)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--compact-acknowledgements", action="store_true",
+                        help="Also replace verified old receipt copies in unfinished runs with compact proofs")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    with sqlite3.connect(args.outbox.resolve().as_uri() + "?mode=ro", uri=True) as queue, \
-            sqlite3.connect(args.library.resolve().as_uri() + "?mode=ro", uri=True) as library:
+    with closing(sqlite3.connect(args.outbox.resolve().as_uri() + "?mode=ro", uri=True)) as queue, \
+            closing(sqlite3.connect(args.library.resolve().as_uri() + "?mode=ro", uri=True)) as library:
         queue.row_factory = library.row_factory = sqlite3.Row
         for connection in (queue, library):
             connection.execute("PRAGMA query_only=ON")
             connection.execute("BEGIN")
         plan = inspect(queue, library, args.endpoint, keep_days=args.keep_days)
-    queue.close()
-    library.close()
+        if args.compact_acknowledgements and not args.apply:
+            from .outbox_compaction import compact
+            plan["acknowledgements"] = compact(SimpleNamespace(db=queue, producer=plan["producer"]),
+                                               library, keep_days=args.keep_days)
     if args.report:
         args.report.write_text(json.dumps(plan, sort_keys=True) + "\n")
     result = summary(plan)
+    if "acknowledgements" in plan:
+        result["acknowledgements"] = plan["acknowledgements"]
     if args.apply:
         from .outbox import Outbox
         box = Outbox(args.outbox, plan["endpoint"], plan["producer"], create=False)
         try:
             result["deleted_events"] = apply(box, plan)
+            if args.compact_acknowledgements:
+                from .outbox_compaction import compact
+                with closing(sqlite3.connect(args.library.resolve().as_uri() + "?mode=ro", uri=True)) as library:
+                    library.row_factory = sqlite3.Row
+                    library.execute("PRAGMA query_only=ON")
+                    library.execute("BEGIN")
+                    result["acknowledgements"] = compact(box, library, keep_days=args.keep_days, apply=True)
         finally:
             box.close()
     print(json.dumps(result, sort_keys=True))

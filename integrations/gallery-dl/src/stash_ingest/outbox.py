@@ -5,6 +5,7 @@ fenced leases; interrupted delivery replays the same event bytes. A validated
 server receipt and payload removal are committed in the same FULL transaction.
 """
 
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 import os
@@ -17,7 +18,7 @@ from .encoding import InvalidData, MAX_BATCH_BYTES, decode, digest, encode, iden
 from .endpoint import origin
 
 APPLICATION_ID = 0x5354494F  # STIO, not a Stash or gallery-dl archive database.
-SCHEMA = 24
+SCHEMA = 25
 
 
 def is_contention(error):
@@ -62,6 +63,7 @@ class Outbox:
             raise InvalidData("Outbox capacity must be positive")
         self.max_events, self.max_bytes, self.clock = max_events, max_bytes, clock
         self.receipt_lookup = receipt_lookup
+        self._receipt_cache = OrderedDict()
         path = Path(path).absolute()
         self.path = path
         # The directory is provisioned by the runner. Do not silently create a
@@ -453,12 +455,33 @@ class Outbox:
 
     def receipt(self, event_uuid):
         identifier(event_uuid)
-        row = self.db.execute("SELECT receipt FROM events WHERE event_uuid=?", (event_uuid,)).fetchone()
+        row = self.db.execute("""SELECT event_uuid,sha256,kind,collection_uuid,collection_revision,
+            root_uuid,run_uuid,receipt FROM events WHERE event_uuid=?""", (event_uuid,)).fetchone()
         if row is not None:
-            return decode(row[0], 65536) if row[0] is not None else None
+            from .receipt_proofs import is_compact
+            if is_compact(row["receipt"]):
+                return self._compact_receipt(row)
+            return decode(row["receipt"], 65536) if row["receipt"] is not None else None
         if self.db.execute("SELECT 1 FROM retired_event_runs LIMIT 1").fetchone():
             return self._retired_receipt(event_uuid)
         return None
+
+    def _compact_receipt(self, row):
+        from .client import Client
+        from .receipt_proofs import retained_record
+        if self.db.in_transaction:
+            raise Conflict("Remote receipt lookup cannot run inside an outbox transaction")
+        key = (row["event_uuid"], row["receipt"])
+        cached = self._receipt_cache.get(key)
+        if cached is None:
+            lookup = self.receipt_lookup or Client(self.endpoint, self.producer).receipt
+            value = retained_record(row, self.producer, lookup(row["event_uuid"]))
+            cached = encode(value, 65536)
+            self._receipt_cache[key] = cached
+            if len(self._receipt_cache) > 128:
+                self._receipt_cache.popitem(last=False)
+        self._receipt_cache.move_to_end(key)
+        return decode(cached, 65536)
 
     def _retired_receipt(self, event_uuid):
         from .client import Client, Unavailable

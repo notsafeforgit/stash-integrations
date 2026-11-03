@@ -48,6 +48,14 @@ class DownloadReceiptTests(ReceiptFixture):
         with self.assertRaisesRegex(InvalidArchive, "missing its report"):
             self.verify()
 
+    def test_compact_acknowledgements_preserve_capture_file_and_download_dependencies(self):
+        _, _, end = self.downloaded()
+        self.assertEqual(self.compact_acknowledgements()['compacted_events'], 4)
+        self.assertEqual(self.verify()['producers'][0]['counts']['acknowledged'], 4)
+        self.box.db.execute('UPDATE events SET parent_uuid=NULL WHERE event_uuid=?', (end['event_uuid'],))
+        with self.assertRaisesRegex(InvalidArchive, 'lost its queued parent'):
+            self.verify()
+
     def test_lost_response_keeps_exact_terminal_bytes_and_native_history(self):
         _, _, end = self.downloaded(acknowledge=False)
         proof = self.verify()["producers"][0]["counts"]
