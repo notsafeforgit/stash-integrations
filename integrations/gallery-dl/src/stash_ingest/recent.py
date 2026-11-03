@@ -39,11 +39,13 @@ def posts(iterator, producer, category, *, resume_scope=True):
         # children, before deciding to stop. Attachment counts are not posts.
         producer.routine_post_items = 0
         producer.routine_post_new = False
+        producer.routine_post_archived = False
         producer.routine_post_attachments = set()
         yield entry
         if (not pinned and not replaying and (not resume_scope or not producer.resume_cursor)
-                and producer.routine_post_items and not producer.routine_post_new
-                and complete_manifest(data, category, producer.routine_post_attachments)):
+                and (producer.routine_post_archived or
+                     (producer.routine_post_items and not producer.routine_post_new
+                      and complete_manifest(data, category, producer.routine_post_attachments)))):
             return
 
 

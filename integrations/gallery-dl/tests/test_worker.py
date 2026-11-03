@@ -39,7 +39,7 @@ class WorkerTests(unittest.TestCase):
         self.client = Client("http://example.invalid", PRODUCER, timeout=1)
         self.client.capabilities = Mock(return_value={"source_runs": True, "source_run_protocol": 1, "source_run_recovery_protocol": 1, "source_run_pacing_protocol": 1, "source_run_fairness_protocol": 1, "source_request_budget_protocol": 1, "source_request_backoff_protocol": 1, "source_run_pagination_protocol": 1, "file_ingestion": True,
                                                      "source_run_origins_protocol": 1,
-                                                     "source_run_attachment_retry_protocol": 1,
+                                                     "source_run_attachment_retry_protocol": 2,
                                                      "source_run_redgifs_pagination_protocol": 1,
                                                      "source_run_instagram_pagination_protocol": 1,
                                                      "attachment_download_protocol": 1, "max_attachment_download_bytes": 16384, "file_transformation_protocol": 1,
@@ -156,6 +156,50 @@ class WorkerTests(unittest.TestCase):
             self.assertTrue((self.profile.root.path / event["relative_path"]).is_file())
         self.delivery.close.assert_called_once()
         self.lease.close.assert_called_once()
+
+    def setup_expired_retry(self):
+        data = json.loads((self.directory / 'worker.json').read_text())
+        data['source_category'] = 'reddit'
+        self.profile = Configuration.from_document(data, self.directory)
+        self.lease.run.update(policy_sha256=self.profile.policy_sha256, attachment_retry=True,
+            attachment_retry_finalize=True, retrieval_url='https://www.reddit.com/comments/postabc123/',
+            attachment_retry_source=reddit_data(source_extractor_url='https://www.reddit.com/user/example/submitted/'))
+        self.client._request.return_value = self.lease.run
+
+    def test_expired_retry_only_writes_archive_and_creates_no_file_or_missing_receipts(self):
+        self.setup_expired_retry()
+        task = Mock(side_effect=AssertionError('An exhausted post must not be fetched again'))
+        self.assertEqual(self.run_worker(task)['state'], 'source_succeeded')
+        self.assertEqual(self.run_worker(task)['state'], 'source_succeeded')
+        task.assert_not_called()
+        self.assertEqual(self.box.db.execute('SELECT count(*) FROM events').fetchone()[0], 0)
+        with closing(sqlite3.connect(self.directory / 'archive.sqlite')) as db:
+            self.assertEqual(db.execute('SELECT entry FROM archive').fetchall(), [('stash:completed:reddit:postabc123',)])
+        self.assertEqual(self.downloaded, [])
+
+    def test_expired_retry_archive_storage_failure_remains_retryable(self):
+        self.setup_expired_retry()
+        with patch('stash_ingest.post_archive.record', side_effect=sqlite3.OperationalError('disk full')):
+            self.assertEqual(self.run_worker()['state'], 'retry')
+        self.lease.finish.assert_called_once_with('retry', error_code='worker_storage_unavailable')
+        self.lease.finish.reset_mock()
+        self.assertEqual(self.run_worker()['state'], 'source_succeeded')
+        self.lease.finish.assert_called_once_with('succeeded', error_code='')
+        self.assertEqual(self.downloaded, [])
+
+    def test_expired_retry_rejects_wrong_archive_context(self):
+        self.setup_expired_retry()
+        self.lease.run['attachment_retry_source']['id'] = 'anotherpost'
+        result = self.run_worker()
+        self.assertEqual((result['state'], result['error_code']), ('deferred', 'worker_configuration_or_source'))
+        self.assertFalse((self.directory / 'archive.sqlite').exists())
+        self.assertEqual(self.downloaded, [])
+
+    def test_retry_claim_context_survives_heartbeat_payload_omission(self):
+        self.setup_expired_retry()
+        self.lease.start.side_effect = lambda: self.lease.run.pop('attachment_retry_source')
+        self.assertEqual(self.run_worker()['state'], 'source_succeeded')
+        self.assertEqual(self.downloaded, [])
 
     def test_reviewed_upgrade_claims_current_adapter_without_rewriting_admission(self):
         self.lease.run.update(policy_sha256="a" * 64, execution_policy_sha256=self.profile.policy_sha256)

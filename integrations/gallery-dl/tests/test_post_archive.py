@@ -1,0 +1,78 @@
+"""Completion markers are durable, whole-post decisions in the existing archive."""
+
+from contextlib import closing
+from pathlib import Path
+import sqlite3
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from gallery_dl import archive as gdl_archive
+from stash_ingest import post_archive
+from stash_ingest.outbox import Outbox
+from helpers import PRODUCER
+
+
+class PostArchiveTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.box = Outbox(self.root / 'outbox.sqlite', 'http://example.invalid', PRODUCER)
+        self.addCleanup(self.box.close)
+
+    def archive(self, mode=None):
+        archive = gdl_archive.connect(str(self.root / 'archive.sqlite'), 'reddit', '{filename}', mode=mode)
+        self.addCleanup(archive.close)
+        return archive
+
+    def test_album_requires_every_attachment_or_explicit_unavailable_status(self):
+        archive = self.archive()
+        data = {'id': 'abc123', 'is_gallery': True, 'gallery_data': {'items': [{'media_id': 'one'}, {'media_id': 'two'}]}}
+        post = post_archive.Post(data, archive)
+        post.completed({'namespace': 'native:reddit', 'value': 'one'})
+        post.finish(self.box)
+        self.assertFalse(post_archive.contains(archive, 'abc123'))
+        post.completed({'namespace': 'native:reddit', 'value': 'two'})
+        post.finish(self.box)
+        self.assertTrue(post_archive.contains(archive, 'abc123'))
+        data['id'] = 'def456'
+        data['media_metadata'] = {'two': {'status': 'failed'}}
+        post = post_archive.Post(data, archive)
+        post.completed({'namespace': 'native:reddit', 'value': 'one'})
+        post.finish(self.box)
+        self.assertTrue(post_archive.contains(archive, 'def456'))
+
+    def test_pending_retry_prevents_completion_even_if_other_files_are_archived(self):
+        archive = self.archive()
+        post = post_archive.Post({'id': 'abc123'}, archive)
+        post.completed({'namespace': 'native:reddit', 'value': 'one'})
+        post.pending = True
+        post.finish(self.box)
+        self.assertFalse(post_archive.contains(archive, 'abc123'))
+
+    def test_memory_archive_marker_is_committed_before_acknowledgement(self):
+        archive = self.archive('memory')
+        post_archive.record(archive, 'abc123')
+        with closing(sqlite3.connect(self.root / 'archive.sqlite')) as db:
+            self.assertEqual(db.execute('SELECT entry FROM archive').fetchall(), [('stash:completed:reddit:abc123',)])
+
+    def test_missing_cache_retired_only_after_archive_commit(self):
+        archive = self.archive()
+        self.box.db.execute("INSERT INTO missing_media VALUES('imgur','missing',3,'2026-11-03T00:00:00+00:00','2026-11-03T00:00:00+00:00',404)")
+        post = post_archive.Post({'id': 'abc123'}, archive)
+        post.missing('imgur', 'missing', None)
+        with patch('stash_ingest.post_archive.record', side_effect=sqlite3.OperationalError('disk full')):
+            with self.assertRaises(sqlite3.OperationalError):
+                post.finish(self.box)
+        self.assertEqual(self.box.db.execute('SELECT count(*) FROM missing_media').fetchone()[0], 1)
+        post.finish(self.box)
+        self.assertEqual(self.box.db.execute('SELECT count(*) FROM missing_media').fetchone()[0], 0)
+        self.assertEqual(self.box.db.execute('SELECT count(*) FROM events').fetchone()[0], 0)
+
+    def test_cache_expiry_does_not_accumulate_old_missing_records(self):
+        self.box.db.execute("INSERT INTO missing_media VALUES('imgur','old',3,'2000-01-01T00:00:00Z','2000-01-01T00:00:00Z',404)")
+        self.box.db.execute("INSERT INTO deleted_media VALUES('redgifs','old','2000-01-01T00:00:00Z',410,1)")
+        post_archive.prune_old_cache(self.box)
+        for table in ('missing_media', 'deleted_media'):
+            self.assertEqual(self.box.db.execute('SELECT count(*) FROM ' + table).fetchone()[0], 0)

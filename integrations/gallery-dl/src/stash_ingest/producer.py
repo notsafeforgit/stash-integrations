@@ -37,10 +37,14 @@ class Producer:
         self.outbox, self.lease, self.root = outbox, lease, root
         self.source_category = source_category
         self.attachment_retries = attachment_retries
+        if attachment_retries:
+            from .post_archive import prune_old_cache
+            prune_old_cache(outbox)
         self.unhandled_download_failure = False
         self.scan_mode = scan_mode
         self.routine_post_items = 0
         self.routine_post_new = False
+        self.routine_post_archived = False
         self.routine_post_attachments = set()
         if configuration_check is not None and not callable(configuration_check):
             raise InvalidData("Invalid worker configuration check")

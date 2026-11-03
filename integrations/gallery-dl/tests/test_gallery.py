@@ -512,6 +512,29 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(request['window'], normalize(self.lease.run['window']))
         self.assertEqual(request['collection_uuid'], self.lease.run['collection_uuid'])
 
+    def test_finished_post_uses_archive_without_repeating_download_or_receipts(self):
+        self.producer.attachment_retries = True
+        self.assertEqual(self.task().run(), 0)
+        self.assertEqual(self.archive_count(), 2)  # one real file and one finished post
+        before = self.events(kinds=None)
+        again = self.task()
+        again.download = lambda _: self.fail('A finished post must not fetch media again')
+        self.assertEqual(again.run(), 0)
+        self.assertEqual(self.events(kinds=None), before)
+        self.assertEqual(self.archive_count(), 2)
+
+    def test_archive_post_write_failure_does_not_finish_or_refetch_completed_bytes(self):
+        self.producer.attachment_retries = True
+        with patch('stash_ingest.post_archive.record', side_effect=sqlite3.OperationalError('disk full')):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.task().run()
+        self.assertEqual(self.archive_count(), 1)
+        self.producer.storage_failure = None
+        again = self.task()
+        again.download = lambda _: self.fail('The downloaded file already has its own archive entry')
+        self.assertEqual(again.run(), 0)
+        self.assertEqual(self.archive_count(), 2)
+
     def test_missing_file_cannot_complete_before_its_retry_is_durable(self):
         from stash_ingest.outbox import Capacity
         self.producer.attachment_retries = True

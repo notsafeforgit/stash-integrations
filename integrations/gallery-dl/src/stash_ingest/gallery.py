@@ -16,7 +16,7 @@ from gallery_dl import config, exception, job, text, version
 from gallery_dl import path as gallery_path
 from gallery_dl.extractor.common import Message
 
-from . import deleted_media, missing_media, reddit_imgur, redgifs, filename, instagram, mirror, recent, social_media, web_media, source
+from . import deleted_media, missing_media, post_archive, reddit_imgur, redgifs, filename, instagram, mirror, recent, social_media, web_media, source
 from .encoding import InvalidData
 from .filesystem import destination_lock
 from .runs import SourceFailure, SourcePaused, SourceTurnComplete
@@ -255,6 +255,7 @@ class NativeDownloadJob(job.DownloadJob):
         self._native_deleted_result = None
         self._native_missing_target = None
         self._native_missing_result = None
+        self._native_post = None
         super().__init__(extractor, parent)
         extractor = self.extractor
         if parent is None and self.producer.source_category is not None and extractor.category != self.producer.source_category:
@@ -322,6 +323,38 @@ class NativeDownloadJob(job.DownloadJob):
             parent = parent._native_parent
         return None
 
+    def _post_state(self):
+        owner = self
+        while owner is not None:
+            if owner._native_post is not None:
+                return owner._native_post
+            owner = owner._native_parent
+        return None
+
+    @publication_guard
+    def _finish_post(self):
+        if self._native_post is not None:
+            self._native_post.finish(self.producer.outbox)
+
+    def _skip_finished_post(self, url, data, *, queued=False):
+        post = self._post_state()
+        if post is None or not post.already:
+            return False
+        self.producer.routine_post_archived = True
+        # Old item-only cursors must still encounter their exact attachment.
+        # Consume its checkpoint without retrying an exhausted media transfer.
+        if self.producer.resume_cursor and self.producer.saved_pagination is None:
+            if queued:
+                return False
+            self._native_url = url
+            self.pathfmt.set_filename(data)
+            try:
+                self._prepare(self.pathfmt)
+                self.producer.checkpoint(self._native_cursor, self._native_replay, False)
+            finally:
+                self._release()
+        return True
+
     def run(self):
         self.producer.check()
         validate_keywords(self.extractor)
@@ -338,6 +371,8 @@ class NativeDownloadJob(job.DownloadJob):
                 result = 0
             elif result == 4:
                 self.producer.unhandled_download_failure = True
+            if result and self._post_state() is not None:
+                self._post_state().pending = True
             if self._native_parent is None and not result:
                 self.producer.traversed()
             return result
@@ -409,6 +444,7 @@ class NativeDownloadJob(job.DownloadJob):
                 try:
                     kind, url, data = self._source_operation(next, iterator)
                 except StopIteration:
+                    self._finish_post()
                     return
                 except deleted_media.DeletedMedia as exc:
                     self._native_parent._native_deleted_result = exc.status
@@ -543,10 +579,16 @@ class NativeDownloadJob(job.DownloadJob):
     @publication_guard
     def handle_directory(self, kwdict):
         self.producer.check()
+        self._finish_post()
         if self.pathfmt is not None:
             self._check_directory(kwdict)
         super().handle_directory(kwdict)
         self.producer.relative(self.pathfmt.realdirectory)
+        if (self.producer.attachment_retries and self._native_parent is None
+                and self.extractor.category == 'reddit' and not kwdict.get('comment')):
+            self._native_post = post_archive.Post(kwdict, self.archive)
+            if self._native_post.already:
+                self.producer.routine_post_archived = True
 
     def _check_directory(self, kwdict):
         self.producer.check()
@@ -560,6 +602,8 @@ class NativeDownloadJob(job.DownloadJob):
     def handle_url(self, url, kwdict):
         self.producer.check()
         self._native_prepared, self._native_phase = None, None
+        if self._skip_finished_post(url, kwdict):
+            return
         if self.extractor.category in ("kemono", "coomer", *web_media.CATEGORIES) and kwdict.get('extension', '').lower() not in mirror.VISUAL:
             # Keep non-playable source evidence, but do not download audio or
             # archives which cannot produce a supported native file receipt.
@@ -602,6 +646,8 @@ class NativeDownloadJob(job.DownloadJob):
 
     def handle_queue(self, url, kwdict):
         self.producer.check()
+        if self._skip_finished_post(url, kwdict, queued=True):
+            return
         if self._native_collection_route == (url, kwdict.get("_extractor")):
             self._native_collection_child = True
             try:
@@ -630,11 +676,19 @@ class NativeDownloadJob(job.DownloadJob):
                 fresh = False
             if missing is not None:
                 target = self._native_missing_target
-                self.producer.skipped(dict(target['metadata'], source_extractor_url=source_url(self.extractor)),
-                                      target['attachment'], missing)
+                post = self._post_state()
+                if post is not None:
+                    post.missing(target['service'], target['item'], target['attachment'])
+                else:
+                    self.producer.skipped(dict(target['metadata'], source_extractor_url=source_url(self.extractor)),
+                                          target['attachment'], missing)
                 self.log.info('Linked media is still missing after three attempts; skipping this item')
             if status is not None:
-                self.producer.deleted(dict(bound[2], source_extractor_url=source_url(self.extractor)), bound[1], status)
+                post = self._post_state()
+                if post is not None:
+                    post.missing('redgifs', bound[0], bound[1])
+                else:
+                    self.producer.deleted(dict(bound[2], source_extractor_url=source_url(self.extractor)), bound[1], status)
                 if fresh:
                     deleted_media.remember(self.producer.outbox, status)
                 self.log.info('External media is confirmed deleted; continuing this post and the remaining source')
@@ -656,6 +710,9 @@ class NativeDownloadJob(job.DownloadJob):
             # An empty/unsupported/failed child is not a wholly archived post.
             if self.producer.routine_post_items == before:
                 self.producer.routine_post_new = True
+                post = self._post_state()
+                if post is not None and status is None and missing is None:
+                    post.pending = True
             self._native_queued_date = None
             self._native_deleted_target = self._native_deleted_result = None
             self._native_missing_target = self._native_missing_result = None
@@ -718,6 +775,9 @@ class NativeDownloadJob(job.DownloadJob):
 
     def _download_error(self, pathfmt):
         self.producer.routine_post_new = True
+        post = self._post_state()
+        if post is not None:
+            post.pending = True
         if self._native_prepared is None:
             raise InvalidData("Failed download has no durable source capture")
         event = self.producer.report_download(self._native_prepared, "failed", reason_code="download_failed")
@@ -764,6 +824,12 @@ class NativeDownloadJob(job.DownloadJob):
             self.producer.report_download(self._native_prepared, "skipped", reason_code=(
                 "archive_entry_without_file" if archived else "existing_without_file"))
             self._native_phase = None
+        post = self._post_state()
+        if post is not None:
+            if completed or archived:
+                post.completed(self._native_prepared.attachment)
+            else:
+                post.pending = True
         self._release()
         try:
             self.producer.checkpoint(self._native_cursor, self._native_replay, completed)

@@ -102,3 +102,20 @@ queues validate their binding in a read snapshot and need no writer lock to open
 Upgrade shared-outbox command clients and archive readers before enabling the new
 workers. The index migration is transactional; it changes no queued event, source
 window, policy, receipt or producer identity.
+
+Release v0.6.21 introduces execution contract v3 (producer schema stays 24).
+Reddit post completion is stored as `stash:completed:reddit:<id>` in the configured
+gallery-dl archive. The native adapter skips a completed post without another media
+fetch. Ordinary file archive entries and file receipts still describe real files.
+Focused missing-file jobs expire after 48 hours; their final claim writes the
+original archive locally from retained source context, without contacting Reddit.
+Retry-only state is retired after completion, and old missing-media caches expire.
+Partial albums cannot become complete while an attachment is unresolved.
+
+Deploy native schema 1000137 / attachment retry protocol 2 and all shared-outbox
+clients and backup readers together, then explicitly upgrade reviewed v1/v2 queue
+policies to v3. Preserve producer UUIDs, archives, original requests, pending ranges,
+checkpoints, and actual receipt history. Stop writers during the coordinated
+upgrade and wait for active backup captures to finish before changing captured
+runtime configuration. Vanilla gallery-dl does not interpret the adapter's post
+completion entries; keep using the native adapter for these managed jobs.
