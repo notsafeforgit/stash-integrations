@@ -1,3 +1,4 @@
+from contextlib import closing
 import hashlib
 import json
 import sqlite3
@@ -50,7 +51,7 @@ class ArtworkPolicyTests(ArchiveTests):
         self.assertFalse(any(e['role'] == 'blob' for e in iter_artifacts(self.output, manifest)))
         restored = self.root / 'restore'
         import_archive(self.output, restored, reserve=0)
-        with sqlite3.connect(restored / 'library.sqlite') as db:
+        with closing(sqlite3.connect(restored / 'library.sqlite')) as db:
             self.assertEqual(db.execute('select cover_blob from scenes').fetchone()[0], self.external_md5)
             self.assertEqual(db.execute('select source_fingerprint from scene_cover_sources').fetchone()[0], json_bytes(self.fingerprint))
         row = json.loads((restored / 'generated-covers.jsonl').read_bytes())

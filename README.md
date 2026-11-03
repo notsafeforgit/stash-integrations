@@ -139,3 +139,20 @@ and `source_run_redgifs_deletion_protocol: 1`,
 then explicitly upgrade reviewed v3 policies to v4 while writers are stopped and
 no backup is capturing their configuration. Keep the same producer identities,
 outboxes, archive files and destinations.
+
+Release v0.6.24 keeps execution contract v4 and introduces producer schema 25.
+`stash-outbox-retention --compact-acknowledgements --apply` verifies old accepted
+receipts against the native library and replaces their local JSON copies with
+37-byte versioned SHA-256 proofs after the retention interval (one day by default).
+This also covers unfinished crawls. Event identities, payload hashes, parent
+references, pending payloads, and gallery-dl archives remain intact. Replays still
+deduplicate locally; an old full receipt is fetched from Stash only when needed,
+checked against its proof, and cached in bounded memory. No receipt is copied back
+into the outbox. Completed runs remain eligible for verified whole-run retirement.
+
+Deploy producer clients and archive readers together with shared writers stopped
+and no active backup capture. Older workers reject schema 25. The migration itself
+preserves every receipt; only the explicit verified retention pass compacts them.
+Backup verification rejects compact proofs with missing or changed native receipts.
+Compaction frees SQLite pages for reuse; reclaiming the physical file size requires
+a separate coordinated SQLite compaction while writers are stopped.

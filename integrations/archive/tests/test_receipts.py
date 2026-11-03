@@ -136,6 +136,18 @@ class ReceiptFixture(unittest.TestCase):
                 queues.append(queue)
             return verify_ingestion_receipts(native, queues, expected_origin)
 
+    def compact_acknowledgements(self):
+        from stash_ingest.outbox_compaction import compact
+        self.db.row_factory = sqlite3.Row
+        self.db.execute('PRAGMA query_only=ON')
+        self.db.execute('BEGIN')
+        try:
+            return compact(self.box, self.db, now=self.box.clock() + 2 * 86400, apply=True)
+        finally:
+            self.db.rollback()
+            self.db.execute('PRAGMA query_only=OFF')
+            self.db.row_factory = None
+
 
 class ReceiptBoundaryTests(ReceiptFixture):
     def test_matching_acknowledged_pending_and_lost_response_are_preserved(self):
@@ -206,7 +218,7 @@ class ReceiptBoundaryTests(ReceiptFixture):
         with self.assertRaisesRegex(InvalidArchive, "identity is missing"): self.verify()
 
     def test_future_outbox_version_and_writable_transaction_refused(self):
-        self.box.db.execute("PRAGMA user_version=25")
+        self.box.db.execute("PRAGMA user_version=26")
         with self.assertRaisesRegex(InvalidArchive, "Unsupported producer"): self.verify()
         self.db.execute("BEGIN")
         try:

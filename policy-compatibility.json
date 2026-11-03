@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v4",
-  "implementation_sha256": "0a0d2e845a4c8931009944467e9721d86a98c5b9a465c6b0f99b2958aadd9d69",
-  "decision": "contract-change",
-  "reason": "Execution v4 retires the claimed Redgifs account only after its own listing explicitly reports User account deleted. Native schema 1000138 and account-status/deletion protocols 1 preserve distinct provider availability codes and atomically retire only a confirmed deleted Redgifs source. Suspended, deactivated, unavailable and missing profiles keep monthly rechecks; new linked profiles remain eligible. Explicitly upgrade reviewed v3 policies to v4 after backup captures finish, with shared-outbox writers stopped. Preserve producer identities, original requests, pending ranges, checkpoints, archives, captures and receipt history. Deploy matching clients and archive readers together. Producer schema remains 24."
+  "implementation_sha256": "f806287c50a55a0c15832a2d957983e574c9ff6af7817bcfca7496bfa2c4cb22",
+  "decision": "compatible",
+  "reason": "Execution v4 coverage, cursor semantics, admitted requests and event identities are unchanged. Producer schema 25 can replace verified old acknowledgement JSON with 37-byte receipt proofs even inside unfinished crawls; pending payloads and dependency rows remain. Native receipt lookup validates the proof and keeps only a bounded memory cache. Deploy all shared-outbox writers and archive readers together after active backups finish. The migration retains full receipts until verified retention runs; older clients reject schema 25. No source-policy upgrade is required."
 }

@@ -124,7 +124,7 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
     reports, producers = [], set()
     for queue in outboxes:
         if (queue.execute("PRAGMA application_id").fetchone()[0] != 0x5354494F
-                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 25)):
+                or queue.execute("PRAGMA user_version").fetchone()[0] not in range(1, 26)):
             raise InvalidArchive("Unsupported producer snapshot for receipt verification")
         binding = queue.execute("SELECT endpoint,producer FROM binding").fetchall()
         if len(binding) != 1 or origin(binding[0][0]) != expected_origin:
@@ -177,9 +177,15 @@ def verify_ingestion_receipts(library, outboxes, expected_origin):
                     raise InvalidArchive("Acknowledged producer event is missing from the native snapshot")
                 if row["body"] is not None:
                     raise InvalidArchive("Acknowledged event still has an unexpected payload")
-                retained = checked_json(row["receipt"], MAX_RECEIPT)
-                matching_receipt(row, producer, server, retained)
-                evidence = {"receipt": retained}
+                if isinstance(row["receipt"], bytes) and row["receipt"].startswith(b"\x00SAR\x01"):
+                    from .outbox_history import verify_compact_receipt
+                    matching_receipt(row, producer, server)
+                    verify_compact_receipt(server, row["receipt"], queue.execute("PRAGMA user_version").fetchone()[0])
+                    evidence = {"receipt_sha256": row["receipt"][5:].hex()}
+                else:
+                    retained = checked_json(row["receipt"], MAX_RECEIPT)
+                    matching_receipt(row, producer, server, retained)
+                    evidence = {"receipt": retained}
             else:
                 if row["receipt"] is not None:
                     raise InvalidArchive("Unacknowledged event has an unexpected receipt")
@@ -256,7 +262,7 @@ def verify_snapshot_producers(database, outboxes, expected_origin):
     for path in outboxes:
         with closing(connect_readonly(Path(path))) as queue:
             metadata = database_metadata(queue, "producer_outbox", verification="capture")
-            if metadata["user_version"] not in range(1, 25):
+            if metadata["user_version"] not in range(1, 26):
                 raise InvalidArchive("Unsupported producer snapshot for identity verification")
             if metadata["user_version"] >= 24:
                 from .outbox_history import validate_history_state

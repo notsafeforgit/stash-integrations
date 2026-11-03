@@ -12,6 +12,22 @@ FIELDS = ("producer_uuid", "event_uuid", "sha256", "credential_uuid", "collectio
           "capture_uuid", "job_uuid", "result", "committed_at")
 
 
+def native_receipt_record(row):
+    row = dict(row)
+    row["sha256"] = row["digest"]
+    row["result"] = checked_json(row["result"], 16384)
+    row["committed_at"] = timestamp(row["committed_at"], sqlite=True).astimezone(timezone.utc).isoformat()
+    return {key: row.get(key) for key in FIELDS}
+
+
+def verify_compact_receipt(server, stored, version):
+    # Producer schema 25: binary format 1 followed by the canonical receipt's
+    # SHA-256. Keep this verifier independent of the optional producer package.
+    expected = b"\x00SAR\x01" + hashlib.sha256(json_bytes(native_receipt_record(server))).digest()
+    if version < 25 or stored != expected:
+        raise InvalidArchive("Compact acknowledgement differs from its native receipt or schema")
+
+
 def validate_history_state(queue):
     states = queue.execute("SELECT id,last_sequence FROM outbox_history_state").fetchall()
     maximum = queue.execute("SELECT coalesce(max(seq),0) FROM events").fetchone()[0]
@@ -41,12 +57,9 @@ def verify_retired_runs(library, queue, producer):
         for row in objects(library, "SELECT * FROM ingest_receipts WHERE producer_uuid=? ORDER BY event_uuid", (producer,)):
             if row["run_uuid"] not in proofs:
                 continue
-            row["sha256"] = row["digest"]
-            row["result"] = checked_json(row["result"], 16384)
-            row["committed_at"] = timestamp(row["committed_at"], sqlite=True).astimezone(timezone.utc).isoformat()
             count = totals[row["run_uuid"]]
             count[0] += 1
-            count[1].update(json_bytes({key: row.get(key) for key in FIELDS}))
+            count[1].update(json_bytes(native_receipt_record(row)))
     for run, proof in proofs.items():
         count, digest = totals[run]
         if count != proof["receipt_count"] or digest.hexdigest() != proof["receipts_sha256"]:
