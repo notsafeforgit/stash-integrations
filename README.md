@@ -157,7 +157,7 @@ Backup verification rejects compact proofs with missing or changed native receip
 Compaction frees SQLite pages for reuse; reclaiming the physical file size requires
 a separate coordinated SQLite compaction while writers are stopped.
 
-Release v0.6.28 introduces execution contract v7. An explicitly reviewed Redgifs
+Release v0.6.29 introduces execution contract v7. An explicitly reviewed Redgifs
 profile can set `extractor.redgifs.user.native-history-limit` to `available`.
 After an explicit page-limit response, that traversal tries separate image and
 video feeds and the oldest-first end of feeds that exceed the ceiling. Saved
