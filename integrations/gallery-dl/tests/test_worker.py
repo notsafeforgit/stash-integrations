@@ -201,6 +201,38 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.run_worker()['state'], 'source_succeeded')
         self.assertEqual(self.downloaded, [])
 
+    def test_recovered_retry_marks_original_profile_archive_when_child_table_differs(self):
+        self.setup_expired_retry()
+        self.lease.run['attachment_retry_finalize'] = False
+        document = dict(self.profile.document)
+        document['gallery']['extractor']['archive-table'] = '{subcategory}'
+        self.profile = Configuration.from_document(document, self.directory)
+        self.lease.run['policy_sha256'] = self.profile.policy_sha256
+
+        class CommentFixture(Fixture):
+            subcategory = 'comment'
+
+        def factory(target, *, producer, lock_directory):
+            extractor = CommentFixture.from_url(target)
+            extractor.records, extractor.visited = [reddit_data()], []
+            task = NativeDownloadJob(extractor, producer=producer, lock_directory=lock_directory)
+            def download(url):
+                task.pathfmt.part_enable()
+                with task.pathfmt.open('wb') as output:
+                    output.write(b'recovered bytes')
+                return True
+            task.download = download
+            return task
+
+        self.assertEqual(self.run_worker(factory)['state'], 'source_succeeded')
+        with closing(sqlite3.connect(self.directory / 'archive.sqlite')) as db:
+            self.assertEqual(db.execute('SELECT entry FROM "user-submitted"').fetchall(), [('stash:completed:reddit:postabc123',)])
+            self.assertEqual(db.execute('SELECT count(*) FROM comment').fetchone()[0], 2)
+        self.lease.run['attachment_retry_finalize'] = True
+        factory = Mock(side_effect=AssertionError('The original profile archive already contains completion'))
+        self.assertEqual(self.run_worker(factory)['state'], 'source_succeeded')
+        factory.assert_not_called()
+
     def test_reviewed_upgrade_claims_current_adapter_without_rewriting_admission(self):
         self.lease.run.update(policy_sha256="a" * 64, execution_policy_sha256=self.profile.policy_sha256)
         self.client._request.return_value = dict(self.lease.run)
