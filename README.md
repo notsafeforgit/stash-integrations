@@ -140,7 +140,7 @@ then explicitly upgrade reviewed v3 policies to v4 while writers are stopped and
 no backup is capturing their configuration. Keep the same producer identities,
 outboxes, archive files and destinations.
 
-Release v0.6.24 keeps execution contract v4 and introduces producer schema 25.
+Release v0.6.25 keeps execution contract v4 and introduces producer schema 25.
 `stash-outbox-retention --compact-acknowledgements --apply` verifies old accepted
 receipts against the native library and replaces their local JSON copies with
 37-byte versioned SHA-256 proofs after the retention interval (one day by default).

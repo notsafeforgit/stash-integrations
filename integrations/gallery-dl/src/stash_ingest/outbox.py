@@ -388,8 +388,15 @@ class Outbox:
             raise LeaseLost("Delivery lease expired or was replaced; the event remains queued")
         return row
 
-    def acknowledge(self, delivery, receipt):
+    def acknowledge(self, delivery, receipt, *, receipt_lookup=None):
         raw = encode(receipt, 65536)
+        # A compact parent may require an HTTP lookup. Resolve it before taking
+        # the writer lock, then recheck the delivery fence inside the transaction.
+        capture = None
+        before = self.db.execute("SELECT kind FROM events WHERE event_uuid=?", (delivery.event_uuid,)).fetchone()
+        if before is not None and before["kind"] == "attachment.download":
+            event = events.validate(self._owned(delivery)["body"])
+            capture = self.receipt(event["capture_event_uuid"], lookup=receipt_lookup)
         with self.transaction():
             row = self._owned(delivery)
             if (not isinstance(receipt, dict) or receipt.get("producer_uuid") != self.producer
@@ -417,7 +424,6 @@ class Outbox:
                 identifier(receipt.get("capture_uuid"))
                 identifier(receipt.get("post_uuid"))
                 identifier(receipt["result"].get("attachment_uuid"))
-                capture = self.receipt(event["capture_event_uuid"])
                 if (capture is None or receipt.get("capture_uuid") != capture.get("capture_uuid")
                         or receipt.get("post_uuid") != capture.get("post_uuid")
                         or receipt.get("job_uuid") is not None
@@ -453,20 +459,20 @@ class Outbox:
             if changed != 1:
                 raise Conflict("Only an unresolved event requiring review can be explicitly retried")
 
-    def receipt(self, event_uuid):
+    def receipt(self, event_uuid, *, lookup=None):
         identifier(event_uuid)
         row = self.db.execute("""SELECT event_uuid,sha256,kind,collection_uuid,collection_revision,
             root_uuid,run_uuid,receipt FROM events WHERE event_uuid=?""", (event_uuid,)).fetchone()
         if row is not None:
             from .receipt_proofs import is_compact
             if is_compact(row["receipt"]):
-                return self._compact_receipt(row)
+                return self._compact_receipt(row, lookup=lookup)
             return decode(row["receipt"], 65536) if row["receipt"] is not None else None
         if self.db.execute("SELECT 1 FROM retired_event_runs LIMIT 1").fetchone():
             return self._retired_receipt(event_uuid)
         return None
 
-    def _compact_receipt(self, row):
+    def _compact_receipt(self, row, *, lookup=None):
         from .client import Client
         from .receipt_proofs import retained_record
         if self.db.in_transaction:
@@ -474,7 +480,7 @@ class Outbox:
         key = (row["event_uuid"], row["receipt"])
         cached = self._receipt_cache.get(key)
         if cached is None:
-            lookup = self.receipt_lookup or Client(self.endpoint, self.producer).receipt
+            lookup = lookup or self.receipt_lookup or Client(self.endpoint, self.producer).receipt
             value = retained_record(row, self.producer, lookup(row["event_uuid"]))
             cached = encode(value, 65536)
             self._receipt_cache[key] = cached

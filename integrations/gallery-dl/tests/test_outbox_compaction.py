@@ -4,6 +4,8 @@ import uuid
 
 from helpers import PRODUCER, RUN, capture, file_event
 from test_outbox_history import HistoryFixture
+from test_download_outbox import download, download_receipt
+from stash_ingest.client import Unavailable, drain_once
 from stash_ingest.encoding import InvalidData, encode
 from stash_ingest.outbox import Conflict, Outbox
 from stash_ingest.outbox_compaction import compact
@@ -58,6 +60,57 @@ class AcknowledgementCompactionTests(HistoryFixture):
         self.assertEqual(self.box.db.execute('SELECT length(receipt) FROM events').fetchone()[0], SIZE)
         with self.box.transaction(), self.assertRaisesRegex(Conflict, 'transaction'):
             self.box.receipt(source['event_uuid'])
+
+    def test_new_report_acknowledges_compact_parent_outside_transaction_using_drainer_client(self):
+        source = capture()
+        saved = self.accept(source)
+        self.compact()
+        event = download(source)
+        self.box.enqueue(encode(event))
+        client = Mock(endpoint=self.box.endpoint, producer=self.box.producer)
+        client.capabilities.return_value = {'file_ingestion': False, 'attachment_download_protocol': 1}
+        client.batch.return_value = [{'status': 200, 'receipt': download_receipt(event, saved)}]
+        client.receipt.side_effect = self.lookup
+        self.box.receipt_lookup = Mock(side_effect=AssertionError('must use the actual drainer client'))
+        self.assertEqual(drain_once(self.box, client)['acknowledged'], 1)
+        client.receipt.assert_called_once_with(source['event_uuid'])
+        self.assertEqual(self.box.status()['counts']['review'], 0)
+
+    def test_compact_parent_lookup_outage_retries_original_report_without_review(self):
+        source = capture()
+        saved = self.accept(source)
+        self.compact()
+        event = download(source)
+        self.box.enqueue(encode(event))
+        client = Mock(endpoint=self.box.endpoint, producer=self.box.producer)
+        client.capabilities.return_value = {'file_ingestion': False, 'attachment_download_protocol': 1}
+        client.batch.return_value = [{'status': 200, 'receipt': download_receipt(event, saved)}]
+        client.receipt.side_effect = Unavailable('network_unreachable', 503)
+        result = drain_once(self.box, client)
+        self.assertEqual((result['retried'], result['review']), (1, 0))
+        self.assertEqual(self.box.db.execute('SELECT body FROM events WHERE event_uuid=?',
+                                            (event['event_uuid'],)).fetchone()[0], encode(event))
+        self.now[0] += 1000
+        client.receipt.side_effect = self.lookup
+        self.assertEqual(drain_once(self.box, client)['acknowledged'], 1)
+
+    def test_expired_delivery_during_parent_lookup_keeps_payload_and_fence(self):
+        source = capture()
+        saved = self.accept(source)
+        self.compact()
+        event = download(source)
+        self.box.enqueue(encode(event))
+        client = Mock(endpoint=self.box.endpoint, producer=self.box.producer)
+        client.capabilities.return_value = {'file_ingestion': False, 'attachment_download_protocol': 1}
+        client.batch.return_value = [{'status': 200, 'receipt': download_receipt(event, saved)}]
+        def expired(event_uuid):
+            self.now[0] += 121
+            return self.lookup(event_uuid)
+        client.receipt.side_effect = expired
+        result = drain_once(self.box, client)
+        self.assertEqual((result['lease_lost'], result['acknowledged'], result['review']), (1, 0, 0))
+        delivery, = self.box.claim(str(uuid.uuid4()))
+        self.assertEqual(delivery.body, encode(event))
 
     def test_recent_acknowledgements_remain_full_and_repeated_pass_is_noop(self):
         old = capture()
