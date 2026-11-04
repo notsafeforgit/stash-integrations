@@ -3053,9 +3053,11 @@ bytes, adding only discovery state. A table-name collision rolls back promotion.
 Older producer binaries refuse schema 9. Include the outbox in backups. Blocked
 ready-job claims cause a later retry pass, rather than repeated fresh admissions.
 Actual blocked claims register 90 seconds of interest; polling refreshes it.
-After four download starts or two minutes of live waiting, the oldest eligible
-enrichment requester gets the next turn after current downloads drain. Abandoned
-requests expire, and a metadata start restores download preference. Held/stale
+After four download starts or two minutes of live waiting, an eligible
+enrichment requester that is actively polling gets its due turn after current
+downloads drain. An older waiter's hint cannot reserve the service while its
+worker is visiting other collections. Abandoned requests expire, and a metadata
+start restores download preference. Held/stale
 targets and cooling dependencies cannot reserve unrelated services. This server
 policy coordinates collections even when different workers submit claims.
 Historical metadata gets up to 60 seconds per claimed attempt before queued
