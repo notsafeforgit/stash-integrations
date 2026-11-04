@@ -2,7 +2,7 @@
 
 import copy
 
-from .configuration import Configuration, CONFIG_LIMIT, _snapshot, profile_bytes, policy_identity
+from .configuration import Configuration, CONFIG_LIMIT, _json_file, _snapshot, profile_bytes, policy_identity
 from .encoding import InvalidData, digest, encode
 from .gallery import SUPPORTED_VERSION
 from .metadata_fetch import POSTS, is_post, public_url, safe_config
@@ -15,7 +15,20 @@ class EnrichmentConfiguration(Configuration):
     operation = "post.enrich"
     categories = POSTS
 
-    def _initialize(self, value, base, *, directory_bindings=None, storage=None):
+    @classmethod
+    def inventory_policy(cls, filename):
+        """Read the exact policy without loading credentials in another runtime.
+
+        Only the fingerprint escapes this method; the credential-free instance
+        can never be used for extraction. Public assets remain hash-verified.
+        """
+        from pathlib import Path
+        path = Path(filename).resolve(strict=True)
+        result = cls.__new__(cls)
+        result._initialize(_json_file(path), path.parent, inventory=True)
+        return result.policy_sha256
+
+    def _initialize(self, value, base, *, directory_bindings=None, storage=None, inventory=False):
         if directory_bindings is not None or storage is not None:
             raise InvalidData("Metadata-only profiles do not have directory bindings")
         if (not isinstance(value, dict) or set(value) != {"schema", "source_category", "gallery", "bindings"}
@@ -23,7 +36,7 @@ class EnrichmentConfiguration(Configuration):
                 or not isinstance(value["source_category"], str) or value["source_category"] not in self.categories):
             raise InvalidData("Invalid metadata-only worker configuration")
         self.source_category = value["source_category"]
-        assets = self._bindings(value["bindings"], base)
+        assets = self._bindings(value["bindings"], base, resolve_private=not inventory)
         # Validate references on the reviewed template before projection. Access
         # values never enter the policy digest, native job or local journal.
         template = safe_config(value["gallery"])

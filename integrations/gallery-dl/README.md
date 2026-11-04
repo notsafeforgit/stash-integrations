@@ -597,6 +597,29 @@ reject stale updates from an earlier dispatcher. If reclamation cannot free a
 slot, the worker reports `dispatch_capacity_exhausted` with the table, count and
 limit, and backs off; this does not mean posts or media were discarded.
 
+Automated deployments can run `python -m stash_ingest.dispatch_reconcile` with
+`--outbox`, `--library`, `--endpoint`, and one `--profile-directory` for every
+directory shared by that outbox. Preview is the default; `--apply` retires only
+obsolete enrichment dispatch bookmarks. Hold deployment/backup exclusion while
+reading profiles and applying the result. Inventory includes direct metadata
+profiles, disabled worker profiles and metadata references in dispatcher files.
+It validates public settings and assets without loading website credentials,
+including profiles mounted at different paths in containers. Missing, empty,
+unknown or changing inventories prevent retirement. A deliberately empty
+deployment still requires the explicit retirement command above.
+
+The reconciler also reads native metadata jobs and approved policy upgrades.
+Unfinished original-policy jobs remain protected unless a direct approved
+replacement is configured. Pending delivery bodies, reserved extraction space,
+review jobs, running attempts and missing/mismatched native jobs remain protected.
+An upgraded queued or ended job without pending local evidence can release its
+original bookmark; its immutable journal, checkpoint and native history remain.
+Policies with no remaining work are retired on a later pass. The delivery-only
+cursor is never retired. A busy metadata execution defers cleanup to the next
+pass. No jobs, media, receipts or website state are deleted or fetched, and no
+policy upgrades are approved by this command. `--report` atomically replaces one
+current report instead of accumulating another receipt history.
+
 Keep the producer outbox, profiles, shared files and override files in backups.
 The worker inventory resolves their dependencies, including those still needed
 by saved configurations. When upgrading an existing deployment, register its

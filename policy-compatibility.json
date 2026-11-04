@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "4262b36be8b06f5c6bb02fd91f51ad20cf31803c2cb76ce2dd61d054a4d57f46",
+  "implementation_sha256": "1503eddb22db6da9689d30f50a32e61e405751278fb42b562e4a724a1737bf7d",
   "decision": "compatible",
-  "reason": "Scheduled commands report temporary native API outages as waiting, preserving status and Retry-After; auth, validation and unexpected server errors remain failures. Metadata profiles are polled before download profiles to register native scheduling interest; denied claims fall through to downloads. A full admission queue no longer stops the bounded collection traversal from finding existing jobs. Server pacing, leases, cooldowns and the 64-job limit remain authoritative. Selection checkpoints retain their advance-before-execution meaning. Existing queue identities, receipts, coverage, downloader versions, schema 25, capture v1 and execution v8 remain unchanged."
+  "reason": "Add local, verified retirement of obsolete enrichment dispatch bookmarks from complete profile inventories and native upgrade approvals. Preserve admitted command meaning, active policies, pending/review evidence, immutable job definitions, delivery checkpoints, capture semantics and execution v8; fingerprint inventory never loads credentials or changes runtime policy identities."
 }

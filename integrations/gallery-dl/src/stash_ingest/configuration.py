@@ -88,9 +88,15 @@ def _path(value, base):
     return (value if value.is_absolute() else base / value).resolve()
 
 
-def _pointer(document, pointer):
+def _pointer_syntax(pointer):
     if not isinstance(pointer, str) or len(pointer) > 4096 or (pointer and not pointer.startswith("/")):
         raise InvalidData("Local JSON references require a JSON Pointer")
+    if re.search(r"~(?![01])", pointer):
+        raise InvalidData("Invalid JSON Pointer escape")
+
+
+def _pointer(document, pointer):
+    _pointer_syntax(pointer)
     if pointer:
         for segment in pointer[1:].split("/"):
             if re.search(r"~(?![01])", segment):
@@ -238,7 +244,7 @@ class Configuration:
                                            "runtime": self.compatibility, "gallery_sha256": digest(profile_bytes(value["gallery"])),
                                            "assets": assets}, CONFIG_LIMIT))
 
-    def _bindings(self, bindings, base, *, values=None, kinds=None):
+    def _bindings(self, bindings, base, *, values=None, kinds=None, resolve_private=True):
         if not isinstance(bindings, dict) or len(bindings) > 64:
             raise InvalidData("Invalid worker bindings")
         self.assets = {}
@@ -258,7 +264,9 @@ class Configuration:
                 assets[name] = binding["sha256"]
                 resolved = str(path)
             elif kind == "private" and set(binding) == {"kind", "file", "pointer"}:
-                resolved = _pointer(_json_file(_path(binding["file"], base)), binding["pointer"])
+                path = _path(binding["file"], base)
+                _pointer_syntax(binding["pointer"])
+                resolved = _pointer(_json_file(path), binding["pointer"]) if resolve_private else None
             elif kind == "private" and set(binding) == {"kind", "sources"}:
                 sources = binding["sources"]
                 if not isinstance(sources, list) or not 1 <= len(sources) <= 16:
@@ -267,15 +275,17 @@ class Configuration:
                 for source in sources:
                     if not isinstance(source, dict) or set(source) != {"file", "pointer"}:
                         raise InvalidData("Invalid private configuration layer")
-                    incoming = _pointer(_json_file(_path(source["file"], base)), source["pointer"])
+                    path = _path(source["file"], base)
+                    _pointer_syntax(source["pointer"])
+                    incoming = _pointer(_json_file(path), source["pointer"]) if resolve_private else None
                     resolved = merge_values(resolved, incoming)
             elif kind == "private" and set(binding) == {"kind", "env"}:
                 reference = binding["env"]
                 if not isinstance(reference, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", reference):
                     raise InvalidData("Invalid website access environment reference")
-                if reference not in os.environ:
+                if resolve_private and reference not in os.environ:
                     raise InvalidData("Website access environment reference is unavailable")
-                resolved = os.environ[reference]
+                resolved = os.environ[reference] if resolve_private else None
             else:
                 raise InvalidData("Invalid local worker binding definition")
             self._values[name] = resolved
