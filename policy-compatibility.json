@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "3a88b975648d846920d6a35786a0019d7bbee13105badbc6dd2882110c46e27d",
-  "decision": "contract-change",
-  "reason": "Execution v8 applies the user-reviewed practical Redgifs stopping rule: exhaust image/video newest and oldest listings, then popularity for any remaining middle range. A confirmed final provider ceiling completes the available-history pass and allows later routine scans without recurring historical retries. Cursor v2 records popularity progress and completed exhaustion; retained v1 and numeric cursors require an explicit policy upgrade and resume without losing their saved position. HTTP 429, transient failures and inconsistent replies remain unfinished. Producer identities, archives, source windows, capture contract and schema 25 are preserved."
+  "implementation_sha256": "a2324e49f84dd17b41531bf6a0f55afa3c7dbb589091c416b621810db6e59b37",
+  "decision": "compatible",
+  "reason": "Repair already supported Reddit-to-Redgifs downloads and terminal deletions for legacy Gfycat item permalinks. Exact retained parent, API item and rendition evidence remain required; conflicting or unsupported URLs remain rejected. Explicit deletions complete the existing whole-post archive after all attachments are handled and never schedule monthly recovery. Existing execution v8, capture v1, schema 25, identities, cursors, request policies, source windows and available-history stopping rules are unchanged."
 }

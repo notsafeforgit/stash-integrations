@@ -2,8 +2,9 @@
 
 Only a single Redgifs item's explicit deletion response qualifies. A missing
 profile, ordinary 404, authentication failure, timeout or CDN error does not.
-The local cache avoids repeat API calls across worker restarts; a monthly check
-allows the provider to restore an item without an indefinite local tombstone.
+The short-lived local cache avoids repeat API calls while finishing a post.
+Completed posts stay in gallery-dl's archive; explicit deletion never schedules
+a recovery check. Post completion removes its temporary observation.
 """
 
 from urllib.parse import urlsplit
@@ -12,7 +13,6 @@ from . import reddit_external
 from .encoding import utc_now
 from .retention import retain
 
-RECHECK_SECONDS = 30 * 24 * 60 * 60
 DELETED_MESSAGE = 'The requested gif was deleted and cannot be accessed.'
 
 
@@ -74,8 +74,8 @@ def response(error, request_url, item):
 
 
 def cached(box, item):
-    row = box.db.execute('SELECT observed_at,http_status FROM deleted_media WHERE service=? AND item=? AND recheck_at>?',
-                         ('redgifs', item, box.clock())).fetchone()
+    row = box.db.execute('SELECT observed_at,http_status FROM deleted_media WHERE service=? AND item=?',
+                         ('redgifs', item)).fetchone()
     if row is not None:
         return {'state': 'deleted', 'service': 'redgifs', 'item': item,
                 'observed_at': row['observed_at'], 'http_status': row['http_status']}
@@ -87,4 +87,6 @@ def remember(box, status):
         box.db.execute('''INSERT INTO deleted_media(service,item,observed_at,http_status,recheck_at) VALUES(?,?,?,?,?)
             ON CONFLICT(service,item) DO UPDATE SET observed_at=excluded.observed_at,
             http_status=excluded.http_status,recheck_at=excluded.recheck_at''',
-                       ('redgifs', status['item'], status['observed_at'], status['http_status'], box.clock() + RECHECK_SECONDS))
+                       # Keep the schema-25 column for existing outboxes. Zero
+                       # means no recheck; the post archive owns completion.
+                       ('redgifs', status['item'], status['observed_at'], status['http_status'], 0))

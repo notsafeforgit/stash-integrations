@@ -324,6 +324,12 @@ class GalleryTests(unittest.TestCase):
     def test_reddit_legacy_redgifs_iframe_download_and_replay(self):
         self.check_reddit_linked_redgifs_download_and_skip("https://v3.redgifs.com/ifr/LinkedClip")
 
+    def test_reddit_gfycat_link_download_and_replay(self):
+        self.check_reddit_linked_redgifs_download_and_skip("https://gfycat.com/LinkedClip")
+
+    def test_reddit_gfycat_detail_link_download_and_replay(self):
+        self.check_reddit_linked_redgifs_download_and_skip("https://www.gfycat.com/gifs/detail/LinkedClip")
+
     def test_reddit_numeric_redgifs_link_download_and_replay(self):
         self.check_reddit_linked_redgifs_download_and_skip("https://v3.redgifs.com/watch/773615132055332143")
 

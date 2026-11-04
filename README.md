@@ -157,6 +157,13 @@ Backup verification rejects compact proofs with missing or changed native receip
 Compaction frees SQLite pages for reuse; reclaiming the physical file size requires
 a separate coordinated SQLite compaction while writers are stopped.
 
+Release v0.6.31 repairs legacy Gfycat item links resolved by gallery-dl through
+Redgifs, preserving their Reddit post and Redgifs attachment identities. Explicit
+item deletion completes the post in the existing download archive once its other
+attachments are handled; it never schedules a monthly recovery check or retains
+a separate permanent missing-file record. Execution contract v8, cursors and
+queued policies remain unchanged.
+
 Release v0.6.30 introduces execution contract v8. An explicitly reviewed Redgifs
 profile can set `extractor.redgifs.user.native-history-limit` to `available`.
 After an explicit page-limit response, that traversal tries separate image and

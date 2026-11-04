@@ -7,7 +7,7 @@ from gallery_dl import config, exception
 from gallery_dl.extractor.redgifs import RedgifsAPI
 from requests import Response
 
-from stash_ingest import deleted_media
+from stash_ingest import deleted_media, post_archive
 from stash_ingest.gallery import NativeDownloadJob
 from stash_ingest.outbox import Outbox
 import test_gallery
@@ -97,15 +97,41 @@ class DeletedMediaTests(unittest.TestCase):
         self.assertEqual(captures[0]['source']['native_media_status'], captures[1]['source']['native_media_status'])
         self.assertEqual(len([e for e in events if e['kind'] == 'file.completed']), 2)
 
-    def test_deleted_cache_survives_restart_and_expires_without_marking_downloaded(self):
+    def test_deleted_cache_survives_restart_without_a_recheck_deadline(self):
         status = deleted_media.response(exception.HttpError(response=reply()), reply().url, 'deletedclip')
         self.box.clock = lambda: 1000
         deleted_media.remember(self.box, status)
         with closing(Outbox(self.box.path, self.box.endpoint, self.box.producer, clock=lambda: 1001)) as reopened:
             self.assertEqual(deleted_media.cached(reopened, 'deletedclip'), status)
             self.assertIsNone(deleted_media.cached(reopened, 'otherclip'))
-            reopened.clock = lambda: 1000 + deleted_media.RECHECK_SECONDS
-            self.assertIsNone(deleted_media.cached(reopened, 'deletedclip'))
+            reopened.clock = lambda: 1000 + 365 * 24 * 60 * 60
+            self.assertEqual(deleted_media.cached(reopened, 'deletedclip'), status)
+
+    def test_deleted_legacy_link_finishes_post_without_retry_or_permanent_missing_record(self):
+        self.producer.attachment_retries = True
+        config.set(('extractor', 'reddit'), 'parent-metadata', '_reddit')
+        config.set(('extractor',), 'retries', 0)
+        data = reddit_data('dead', url='https://gfycat.com/DeletedClip')
+        calls = []
+
+        def request(session, method, url, **kwargs):
+            calls.append(url)
+            self.assertEqual(url, reply().url)
+            return reply()
+
+        with patch.object(RedgifsAPI, '_auth', lambda _: 'fixture'), \
+                patch('requests.sessions.Session.request', request):
+            self.assertEqual(self.task(data, fixture=LinkedRedgifsFixture).run(), 0)
+        self.assertEqual(calls, [reply().url])
+        self.assertEqual(self.archive_count(), 1, 'one whole-post completion marker, no successful file entry')
+        self.assertEqual(self.events(kinds=None), [], 'no synthetic successful download or missing-file receipt')
+        for table in ('deleted_media', 'missing_media', 'run_intents'):
+            self.assertEqual(self.box.db.execute('SELECT count(*) FROM ' + table).fetchone()[0], 0)
+        self.box.clock = lambda: 4102444800  # archive completion remains final years later
+        post_archive.prune_old_cache(self.box)
+        with patch.object(RedgifsAPI, 'gif', side_effect=AssertionError('Deleted item must not be retried')):
+            self.assertEqual(self.task(data, fixture=LinkedRedgifsFixture).run(), 0)
+        self.assertEqual(self.archive_count(), 1)
 
     def test_deleted_without_media_does_not_count_as_an_archived_boundary(self):
         data = reddit_data(url='https://www.redgifs.com/watch/deletedclip')

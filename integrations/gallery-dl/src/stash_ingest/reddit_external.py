@@ -37,6 +37,13 @@ def linked(value):
         if match:
             return {'namespace': 'native:redgifs', 'value': match[1].lower()}, 'unknown'
         return None
+    if parsed.hostname in ('gfycat.com', 'www.gfycat.com', 'm.gfycat.com'):
+        # gallery-dl resolves these legacy item permalinks through Redgifs.
+        # Profile/search routes and unrelated hosts cannot establish an item.
+        match = re.fullmatch(r'/(?:gifs/detail/|detail/|ifr/)?([A-Za-z0-9]{1,256})/?', parsed.path)
+        if match:
+            return {'namespace': 'native:redgifs', 'value': match[1].lower()}, 'unknown'
+        return None
     # Native Reddit URLs have their own stable media-ID resolver.
     if parsed.hostname in ('i.redd.it', 'preview.redd.it', 'v.redd.it'):
         return None
