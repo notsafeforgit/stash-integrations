@@ -84,8 +84,11 @@ class WorkerDispatcher:
                           "discovery_detail": ("discovery_detail_executions", deliver_detail)}[kind]
         if state[cursor]:
             identifier(state[cursor])
+        # Listing/detail jobs can finish natively after losing a local lease.
+        # Their saved execution must observe that outcome even without a body.
+        pending = "AND json_type(state,'$.pending')='object'" if kind == 'enrichment' else ''
         query = f"""SELECT job_uuid FROM {table} WHERE phase='active'
-            AND json_type(state,'$.pending')='object' AND job_uuid>? ORDER BY job_uuid LIMIT 1"""
+            {pending} AND job_uuid>? ORDER BY job_uuid LIMIT 1"""
         row = self.box.db.execute(query, (state[cursor],)).fetchone()
         if row is None and state[cursor]:
             row = self.box.db.execute(query, ("",)).fetchone()

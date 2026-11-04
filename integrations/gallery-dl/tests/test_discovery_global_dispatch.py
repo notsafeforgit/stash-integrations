@@ -50,6 +50,23 @@ class GlobalDiscoveryDispatchTests(unittest.TestCase):
             stack.enter_context(patch("stash_ingest.worker_dispatch." + name))
         return result
 
+    def test_bodyless_stale_discovery_observes_native_terminal_outcome(self):
+        from test_discovery_client import execution_fixture
+        description, _ = execution_fixture()
+        with closing(self.open()) as box:
+            journal = DiscoveryJournal(box)
+            with journal.execution():
+                value = journal.prepare(description)
+            terminal = {**description, 'job': {**description['job'], 'state': 'failed',
+                'error_code': 'extraction_failed'}}
+            with (patch.object(DiscoveryClient, 'capabilities'),
+                  patch.object(DiscoveryClient, 'describe', return_value=terminal)):
+                worker = WorkerDispatcher(box, self.transport, self.profiles)
+                result = worker.recover_delivery(worker.state(), 'discovery')
+            self.assertEqual(result['state'], 'failed')
+            self.assertEqual(journal.find(value.job_uuid).phase, 'failed')
+            self.assertEqual(worker.recover_delivery(worker.state(), 'discovery')['state'], 'idle')
+
     def test_metadata_peers_rotate_and_denied_claims_allow_downloads_across_reopens(self):
         with ExitStack() as stack:
             mocked = self.patched_profiles(stack)

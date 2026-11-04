@@ -160,6 +160,7 @@ def inspect_call(calls, client, call_uuid):
         raise Conflict("Caller queue and client identify different Stash producers")
     summary = calls.summary(call_uuid)
     statuses, counts, issues = _RunStatuses(client), Counter(), []
+    sources_terminal = True
     after = 0
     while page := calls.page(call_uuid, after=after):
         for item in page:
@@ -175,9 +176,14 @@ def inspect_call(calls, client, call_uuid):
                                 "collection_revision": item["collection_revision"]}
                     result = inspect_ticket(calls.box, client, item["ticket_uuid"], _statuses=statuses, _expected=expected, _expected_target=item["target_url"])
                     state = result["state"]
+                    sources_terminal = sources_terminal and not result['unassigned'] and all(
+                        part['state'] in ('source_succeeded', 'cancelled') for part in result['submissions'])
                     code = next((part["error_code"] for part in result["submissions"] if part.get("error_code")), None)
                 except InvalidData:
                     state, code = "review", "caller_binding_mismatch"
+                    sources_terminal = False
+            else:
+                sources_terminal = False
             counts[state] += 1
             if state != "source_succeeded" and len(issues) < 20:
                 issues.append({"position": after, "target_url": item["target_url"], "state": state, "error_code": code})
@@ -188,4 +194,4 @@ def inspect_call(calls, client, call_uuid):
     return {"call_uuid": call_uuid, "state": state, "requested": summary["definition"]["window"],
             "target_count": after, "counts": dict(counts), "issues": issues,
             "issues_truncated": after - counts["source_succeeded"] > len(issues),
-            "intake_completion": "inspect_native_receipts"}
+            "intake_completion": "inspect_native_receipts", "sources_terminal": sources_terminal}

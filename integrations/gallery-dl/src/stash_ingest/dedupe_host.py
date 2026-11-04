@@ -31,8 +31,11 @@ def absolute(value):
 def configuration(value):
     required = {"format", "endpoint", "root", "root_uuid", "state_dir", "library_lock",
                 "lock_roots", "api_key_file", "fclones", "stamp_file"}
-    if not isinstance(value, dict) or set(value) != required or value["format"] != FORMAT:
+    if not isinstance(value, dict) or set(value) - {'discovery_timeout'} != required or value["format"] != FORMAT:
         raise InvalidData("Invalid host dedupe configuration")
+    timeout = value.get('discovery_timeout', 7200)
+    if type(timeout) is not int or not 60 <= timeout <= 86400:
+        raise InvalidData('Dedupe discovery timeout must be 60 to 86400 seconds')
     identifier(value["root_uuid"])
     if origin(value["endpoint"]) != value["endpoint"]:
         raise InvalidData("Host dedupe endpoint must be a canonical origin")
@@ -94,7 +97,8 @@ def execute(value, *, before_backup=False, all_content=False):
                                   state_dir=value["state_dir"], library_lock=value["library_lock"],
                                   lock_root=value["lock_roots"], key_file=value["api_key_file"], key_env="STASH_API_KEY",
                                   fclones=value["fclones"], all_content=all_content, report=None,
-                                  request_timeout=900, lock_timeout=300)
+                                  request_timeout=900, lock_timeout=300,
+                                  discovery_timeout=value.get('discovery_timeout', 7200))
         result = run(args)
         if not result.get("finished") or result.get("pending") != 0:
             raise InvalidData("Dedupe did not finish; completion timestamp retained")

@@ -406,7 +406,8 @@ class DedupeTests(unittest.TestCase):
             library_lock = base / "library.lock"
             argv = ["--endpoint", MemoryClient.endpoint, "--root", str(media), "--root-uuid", ROOT,
                     "--state-dir", str(base / "state"), "--library-lock", str(library_lock), "--all-content",
-                    "--lock-root", str(workers[0]), "--lock-root", str(workers[1]), "--lock-timeout", "0.1"]
+                    "--lock-root", str(workers[0]), "--lock-root", str(workers[1]), "--lock-timeout", "0.1",
+                    "--discovery-timeout", "28800"]
             client = MemoryClient(media)
             client.blocked = "different_media_owners"
 
@@ -434,6 +435,7 @@ class DedupeTests(unittest.TestCase):
                     patch.object(client, "preview", side_effect=guarded_preview), redirect_stdout(io.StringIO()):
                 self.assertEqual(3, main(argv))
             discovery.assert_called_once()
+            self.assertEqual(discovery.call_args.kwargs['timeout'], 28800)
             self.assertEqual(["preview"], [kind for kind, _ in client.calls])
             self.assertFalse(Journal.has_active(base / "state"))
 

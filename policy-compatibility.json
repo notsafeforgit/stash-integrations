@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "05aa302f6d7c099d085859886dc8d29703aa95a83fa6776f324471e9c58d8d77",
+  "implementation_sha256": "c26be963481f0364223d453d788a2c79446abbfef7d1706192b6e2533a8acc32",
   "decision": "compatible",
-  "reason": "Reconcile stale local enrichment executions against matching immutable native terminal jobs and verified checkpoint/publication receipts during existing policy maintenance. Preserve unacknowledged payloads, reservations, unfinished jobs, failed-attempt outcomes and transaction rollback. No admitted command, capture, cursor or execution-v8 semantics change."
+  "reason": "Fairly rotate due backfill calls, observe terminal bodyless discovery executions, and let wholly terminal cancelled callers accept authoritative completed account history while preserving original requests, guards and outcomes. Pending source work and uncertain completion deliveries remain protected. Add an optional bounded dedupe discovery deadline without changing media scope or native byte/ownership verification. No source command, capture, coverage or cursor semantics change."
 }

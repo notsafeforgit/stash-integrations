@@ -150,7 +150,7 @@ class BackfillCallTests(unittest.TestCase):
             self.calls.guard(old, status(self.spec, [decision()]))
         self.assertEqual(self.calls.result(self.call), before)
 
-    def test_pending_original_jobs_cannot_be_completed_by_another_calls_later_history(self):
+    def test_pending_jobs_survive_later_history_but_cancelled_callers_accept_it(self):
         self.record()
         advance_once(self.calls, self.client)
         self.admit(complete=False)
@@ -163,12 +163,44 @@ class BackfillCallTests(unittest.TestCase):
             run.update(state="cancelled", completed=[])
         self.now += 30
         result = advance_once(self.calls, self.client)
-        self.assertTrue(result["command_failed"])
+        self.assertFalse(result["command_failed"])
         self.assertFalse(result["backfill_pending"])
-        self.assertEqual(result["stderr_tail"], "source_cancelled")
-        self.calls.retry(self.call)
-        self.assertTrue(advance_once(self.calls, self.client)["command_failed"])
+        self.assertTrue(result['backfill_cached'])
+        self.assertEqual(result['state'], 'completed')
+        self.assertTrue(all(run['state'] == 'cancelled' for run in self.runs.values()))
         self.assertFalse(self.proofs)
+
+    def test_cancelled_calls_without_accepted_history_still_require_review(self):
+        self.record()
+        advance_once(self.calls, self.client)
+        self.admit(complete=False)
+        for run in self.runs.values():
+            run.update(state='cancelled', completed=[])
+        result = advance_once(self.calls, self.client)
+        self.assertEqual(result['state'], 'review')
+        self.assertEqual(result['stderr_tail'], 'source_cancelled')
+        self.assertFalse(self.proofs)
+
+    def test_mixed_cancelled_and_unfinished_calls_cannot_accept_cached_history(self):
+        self.record()
+        advance_once(self.calls, self.client)
+        self.admit(complete=False)
+        next(iter(self.runs.values()))['state'] = 'cancelled'
+        self.rows = [decision('reddit-new'), decision()]
+        result = advance_once(self.calls, self.client)
+        self.assertFalse(result['backfill_cached'])
+        self.assertEqual(result['state'], 'review')
+
+    def test_old_waiting_call_cannot_starve_an_overdue_peer(self):
+        self.record()
+        other = str(uuid.uuid4())
+        self.record(other)
+        first = self.calls.claim(str(uuid.uuid4()))
+        self.assertEqual(first.uuid, self.call)
+        self.calls.release(first)
+        self.now += 31
+        second = self.calls.claim(str(uuid.uuid4()))
+        self.assertEqual(second.uuid, other)
 
     def test_completion_uses_all_original_requests_and_replays_exact_proof_after_lost_response(self):
         self.record()

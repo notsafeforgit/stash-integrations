@@ -106,7 +106,8 @@ class BackfillCalls:
                 "exit_code": 1 if failed else 2 if pending else 0, "network_blocked": False,
                 "stdout_tail": "Backfill is pending." if pending else "Backfill requires review." if failed else
                                "Backfill deliberately skipped." if row["state"] == "skipped" else "Backfill completed or previously accepted.",
-                "stderr_tail": row["error_code"] or "", "backfill_cached": status is not None and row["source_uuid"] is None,
+                "stderr_tail": row["error_code"] or "", "backfill_cached": status is not None and
+                    (row["source_uuid"] is None or receipt.get("accepted_history") is True),
                 "account_backfill_complete": status["account_complete"] if status else False,
                 "decisions": status["decisions"] if status else [], "next_attempt_at": row["available_at"] if pending else None,
                 "intake_completion": "inspect_native_receipts"}
@@ -127,7 +128,7 @@ class BackfillCalls:
             now = self.box.clock()
             where, args = (" AND uuid=?", (call_uuid,)) if call_uuid else ("", ())
             row = self.db.execute("""SELECT * FROM backfill_calls WHERE state IN ('pending','active')
-                AND available_at<=? AND (lease_until IS NULL OR lease_until<=?)""" + where + " ORDER BY seq LIMIT 1",
+                AND available_at<=? AND (lease_until IS NULL OR lease_until<=?)""" + where + " ORDER BY available_at,seq LIMIT 1",
                 (now, now, *args)).fetchone()
             if row is None:
                 return None
@@ -167,6 +168,23 @@ class BackfillCalls:
                 raise InvalidData("Backfill completion proof differs from its recorded digest")
             return row["completion"]
         return None
+
+    def accept_history(self, delivery, status):
+        """Close the caller from accepted account history, not its failed runs.
+
+        Preserve the original guard, source bindings and cancellation evidence.
+        A prepared completion remains an uncertain delivery and must be retried.
+        """
+        status = backfills.validate_status(status, delivery.definition)
+        if status['state'] not in ('completed', 'skipped'):
+            raise Conflict('Unfinished account history cannot finish a backfill caller')
+        body = encode({'status': status, 'accepted_history': True}, 32768)
+        with self.box.transaction():
+            row = self._owned(delivery)
+            if row['guard'] is None or row['completion'] is not None:
+                raise Conflict('Accepted history cannot replace an unguarded or pending completion')
+            self.db.execute('''UPDATE backfill_calls SET receipt=?,state=?,owner=NULL,
+                lease_until=NULL,error_code=NULL WHERE uuid=?''', (body, status['state'], delivery.uuid))
 
     def save_proof(self, delivery, proof):
         body = encode(proof, 1 << 20)
@@ -224,6 +242,11 @@ def advance_once(calls, client, call_uuid=None, *, owner=None):
             if body is None:
                 result = inspect_call(SourceCalls(calls.box), client, row["source_uuid"])
                 if result["state"] != "source_succeeded":
+                    if result['state'] == 'cancelled' and result.get('sources_terminal') is True:
+                        status = backfills.status(client, delivery.definition)
+                        if status['state'] != 'needed':
+                            calls.accept_history(delivery, status)
+                            return calls.result(delivery.uuid)
                     code = next((item["error_code"] for item in result["issues"] if item.get("error_code")), None)
                     review = result["state"] in ("review", "cancelled")
                     calls.release(delivery, code or ("source_" + result["state"] if review else None), review=review)

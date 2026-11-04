@@ -388,7 +388,8 @@ def run(args):
                 candidates = candidates_from_report(read_regular(args.report, MAX_REPORT_BYTES), root,
                                                     all_content=args.all_content)
             else:
-                candidates = discover(args.fclones, root, all_content=args.all_content)
+                candidates = discover(args.fclones, root, all_content=args.all_content,
+                                      timeout=getattr(args, 'discovery_timeout', 7200))
             check()
             journal = Journal.create(state, config, candidates.pairs, discovery_reviews=candidates.reviews)
         return apply_saved(client, journal, check, boundary=boundary)
@@ -406,7 +407,11 @@ def main(argv=None):
     parser.add_argument("--all-content", action="store_true")
     parser.add_argument("--request-timeout", type=float, default=900)
     parser.add_argument("--lock-timeout", type=float, default=300)
+    parser.add_argument("--discovery-timeout", type=int, default=7200,
+                        help="Fclones discovery deadline in seconds (60 to 86400)")
     args = parser.parse_args(argv)
+    if not 60 <= args.discovery_timeout <= 86400:
+        parser.error('--discovery-timeout must be 60 to 86400 seconds')
     try:
         report = run(args)
         print(json.dumps(report, sort_keys=True))

@@ -15,6 +15,19 @@ from stash_ingest.encoding import InvalidData, encode
 
 
 class HostDedupeTests(unittest.TestCase):
+    def test_extended_discovery_deadline_keeps_default_and_rejects_unbounded_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = self.fixture(directory)
+            result = {'finished': True, 'pending': 0}
+            with patch('stash_ingest.dedupe_host.run', return_value=result) as run:
+                execute(value, before_backup=True)
+                self.assertEqual(run.call_args.args[0].discovery_timeout, 7200)
+                execute({**value, 'discovery_timeout': 28800}, before_backup=True)
+                self.assertEqual(run.call_args.args[0].discovery_timeout, 28800)
+            for timeout in (True, 0, 59, 86401, 1.5, '28800'):
+                with self.subTest(timeout=timeout), self.assertRaises(InvalidData):
+                    configuration({**value, 'discovery_timeout': timeout})
+
     def fixture(self, directory):
         root = Path(directory)
         state, _ = private_directory(root / "state")
