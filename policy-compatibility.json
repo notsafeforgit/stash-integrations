@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "a2324e49f84dd17b41531bf6a0f55afa3c7dbb589091c416b621810db6e59b37",
+  "implementation_sha256": "d98903e5692541b037b0fa06ff00826e39b80841fd4e39998fbddd8b61682702",
   "decision": "compatible",
-  "reason": "Repair already supported Reddit-to-Redgifs downloads and terminal deletions for legacy Gfycat item permalinks. Exact retained parent, API item and rendition evidence remain required; conflicting or unsupported URLs remain rejected. Explicit deletions complete the existing whole-post archive after all attachments are handled and never schedule monthly recovery. Existing execution v8, capture v1, schema 25, identities, cursors, request policies, source windows and available-history stopping rules are unchanged."
+  "reason": "Recognize structured HTTP errors hidden by gallery-dl metadata exception wrappers. Missing or gone children use the existing terminal not_found outcome; 429, authentication, access and timeout failures retain their existing retry classifications, and unknown or server failures remain retryable. Saved parent observations, compact unresolved references, HTTP request budgets and Retry-After reporting remain intact. No response bodies or credentials are retained. Execution v8, capture v1, schema 25, policies, downloader versions, archives, identities, source coverage and cursors are unchanged."
 }

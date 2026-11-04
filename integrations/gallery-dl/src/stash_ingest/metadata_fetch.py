@@ -113,19 +113,43 @@ class BudgetYield(RuntimeError):
 
 
 def classify(exc):
-    name = type(exc).__name__
-    if name == 'BudgetYield':
-        return 'budget_yield'
-    if name == "SourceBusy":
-        return "source_busy"
-    if name == "RateLimited" or getattr(exc, "status", None) == 429:
-        return "rate_limited"
-    if getattr(exc, "status", None) == 404:
-        return "not_found"
-    return {"AuthenticationError": "authentication", "AuthorizationError": "access_denied",
-            "AuthRequired": "access_denied", "ChallengeError": "challenge", "NotFoundError": "not_found",
-            "NoExtractorError": "unsupported_extractor", "Timeout": "timeout", "ReadTimeout": "timeout",
-            "ConnectTimeout": "timeout"}.get(name, "extraction_failed")
+    # Redgifs wraps HttpError in AbortExtraction; wrappers can also retain
+    # failures as exception-valued arguments. Follow structured evidence only,
+    # never text that could contain a URL, response body, or credential.
+    names = {"BudgetYield": "budget_yield", "SourceBusy": "source_busy", "RateLimited": "rate_limited",
+             "AuthenticationError": "authentication", "AuthorizationError": "access_denied",
+             "AuthRequired": "access_denied", "ChallengeError": "challenge", "NotFoundError": "not_found",
+             "NoExtractorError": "unsupported_extractor", "Timeout": "timeout", "ReadTimeout": "timeout",
+             "ConnectTimeout": "timeout", "TimeoutError": "timeout"}
+    statuses = {401: "authentication", 403: "access_denied", 404: "not_found",
+                408: "timeout", 410: "not_found", 429: "rate_limited"}
+    pending, seen = [exc], set()
+    for _ in range(32):
+        if not pending:
+            break
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        code = names.get(type(current).__name__)
+        if code in {"budget_yield", "source_busy", "rate_limited"}:
+            return code
+        status = getattr(current, "status", None)
+        if not isinstance(status, int) or status < 400:
+            status = getattr(getattr(current, "response", None), "status_code", None)
+        if status == 429:
+            return "rate_limited"
+        if code is not None:
+            return code
+        if isinstance(status, int) and 400 <= status < 600:
+            return statuses.get(status, "extraction_failed")
+        pending.extend(arg for arg in current.args[:32] if isinstance(arg, BaseException))
+        cause = current.__cause__
+        if cause is None and not current.__suppress_context__:
+            cause = current.__context__
+        if cause is not None:
+            pending.append(cause)
+    return "extraction_failed"
 
 
 def collect(url, settings, resume=None, *, factory=None, check=lambda: None, reserve_source=None, allow_empty=False,

@@ -16,7 +16,7 @@ from gallery_dl.extractor.twitter import TwitterExtractor
 from stash_ingest.encoding import InvalidData, decode, encode
 from stash_ingest.gallery import SUPPORTED_VERSION
 from stash_ingest.metadata_bundle import Bundle
-from stash_ingest.metadata_fetch import collect, fetch, safe_config, _exchange, is_post
+from stash_ingest.metadata_fetch import collect, fetch, safe_config, _exchange, is_post, classify
 from stash_ingest import source
 from stash_ingest.runs import SourcePaused
 
@@ -660,6 +660,83 @@ main()
         result = _exchange([sys.executable, "-B", "-c", script], encode({"url": URL,
             "settings": {"extractor": {"sleep-request": 0}}, "resume": None}), 5)
         self.assertEqual(result, {"error": "rate_limited"})
+
+
+class WrappedMetadataErrorTests(unittest.TestCase):
+    def tearDown(self):
+        config.clear()
+
+    def test_actual_redgifs_wrapper_preserves_status_and_parent_on_child_retry(self):
+        import requests
+        from gallery_dl.extractor.redgifs import RedgifsImageExtractor
+        child_url = 'https://www.redgifs.com/watch/fixtureclip'
+        for status, reason, terminal in ((404, 'not_found', True), (410, 'not_found', True),
+                                        (429, 'rate_limited', False), (401, 'authentication', False),
+                                        (403, 'access_denied', False), (408, 'timeout', False),
+                                        (503, 'extraction_failed', False)):
+            with self.subTest(status=status):
+                calls = []
+                response = requests.Response()
+                response.status_code = status
+                response.url = 'https://api.redgifs.com/v2/gifs/fixtureclip'
+                response._content = b'{"error":{"description":"private-response-content"}}'
+                response._content_consumed = True
+
+                def fail(*args, **kwargs):
+                    raise exception.HttpError(response=response)
+
+                def find(url):
+                    calls.append(url)
+                    if url == URL:
+                        return factory(Post, url, [(Message.Directory, '', post_data()),
+                            (Message.Queue, child_url, post_data())])
+                    target = RedgifsImageExtractor.from_url(url)
+                    target.cache = lambda *args, **kwargs: 'private-auth-token'
+                    target.request_json = fail
+                    return target
+
+                saved = collect(URL, {}, factory=find)
+                queue = 'unresolved' if terminal else 'pending'
+                self.assertEqual(saved[queue][0]['reason'], reason)
+                self.assertFalse(saved['pending' if terminal else 'unresolved'])
+                self.assertEqual(len(saved['records']), 2)
+                self.assertNotIn('private-', encode(saved).decode())
+                records = copy.deepcopy(saved['records'])
+                calls.clear()
+                resumed = collect(URL, {}, saved, factory=find)
+                self.assertEqual(resumed['records'], records)
+                self.assertEqual(resumed[queue], saved[queue])
+                self.assertEqual(calls, [] if terminal else [child_url])
+
+    def test_exception_links_and_error_responses_do_not_lose_status(self):
+        import requests
+        response = requests.Response()
+        response.status_code = 429
+        inner = requests.HTTPError('private-url', response=response)
+        context = exception.AbortExtraction('outer')
+        context.__context__ = inner
+        caused = RuntimeError('outer')
+        caused.__cause__ = context
+        self.assertEqual(classify(caused), 'rate_limited')
+        wrapped_timeout = RuntimeError(requests.ReadTimeout('private-url'))
+        self.assertEqual(classify(wrapped_timeout), 'timeout')
+        response.status_code = 403
+        challenge = exception.ChallengeError('private-challenge', response)
+        self.assertEqual(classify(challenge), 'challenge')
+        response.status_code = 503
+        server_failure = exception.HttpError(response=response)
+        server_failure.__context__ = exception.NotFoundError('earlier unrelated failure')
+        self.assertEqual(classify(server_failure), 'extraction_failed')
+
+    def test_suppressed_context_cycles_and_text_are_not_terminal_evidence(self):
+        hidden = RuntimeError('outer')
+        hidden.__context__ = exception.NotFoundError('private-url')
+        hidden.__suppress_context__ = True
+        self.assertEqual(classify(hidden), 'extraction_failed')
+        cycle = RuntimeError('404 deleted rate_limited')
+        cycle.__cause__ = cycle
+        cycle.args = (cycle,)
+        self.assertEqual(classify(cycle), 'extraction_failed')
 
 
 if __name__ == "__main__":
