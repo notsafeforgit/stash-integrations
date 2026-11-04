@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v7",
-  "implementation_sha256": "9dbd33a92dc2ba590a72342c9f8b5dd3e642d474300355668dcd9e08ee79ba08",
-  "decision": "compatible",
-  "reason": "Complete the v7 fail-closed listing validation: reject malformed totals and a positive total paired with zero pages, preserving the reviewed requirement that contradictory pagination cannot establish history completion. The execution/capture contracts, cursor encoding, source windows, run modes, producer identities, archives, schema 25 and website retry behavior are unchanged. This correction is published before deployment of the new v7 completion rule."
+  "execution_contract": "stash-worker-execution-v8",
+  "implementation_sha256": "3a88b975648d846920d6a35786a0019d7bbee13105badbc6dd2882110c46e27d",
+  "decision": "contract-change",
+  "reason": "Execution v8 applies the user-reviewed practical Redgifs stopping rule: exhaust image/video newest and oldest listings, then popularity for any remaining middle range. A confirmed final provider ceiling completes the available-history pass and allows later routine scans without recurring historical retries. Cursor v2 records popularity progress and completed exhaustion; retained v1 and numeric cursors require an explicit policy upgrade and resume without losing their saved position. HTTP 429, transient failures and inconsistent replies remain unfinished. Producer identities, archives, source windows, capture contract and schema 25 are preserved."
 }

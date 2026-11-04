@@ -89,14 +89,17 @@ class WorkerTests(unittest.TestCase):
         with patch("stash_ingest.gallery.NativeDownloadJob", side_effect=factory or self.job):
             return execute(self.box, self.client, self.profile, RUN)
 
-    def test_unresolved_redgifs_history_cannot_be_reported_as_completed(self):
+    def test_redgifs_popularity_rate_limit_retries_but_confirmed_ceiling_completes(self):
         from types import SimpleNamespace
         from stash_ingest import redgifs_history
         target = SimpleNamespace(url='https://www.redgifs.com/users/example', key='example', per_page=100,
-                                 api=SimpleNamespace(_call=Mock(side_effect=AssertionError('No requests'))))
+                                 api=SimpleNamespace(_call=None))
         resume = {'extractor':'redgifs:user', 'url':target.url,
-                  'cursor':redgifs_history.encode(dict(phase=5,page=1,limit=100,images=1,videos=201)), 'item':''}
+                  'cursor':redgifs_history.encode(dict(phase=6,page=101,limit=100,images=1,videos=201)), 'item':''}
         def factory(_, *, producer, lock_directory):
+            def call(*_):
+                producer.fail_source(code, 'service:redgifs', **({'page_limit': 100} if code == 'source_history_limit' else {}))
+            target.api._call = call
             redgifs_history.install(target, producer, resume)
             def run():
                 try:
@@ -105,13 +108,18 @@ class WorkerTests(unittest.TestCase):
                     return 1  # gallery-dl can catch the exception and return a status.
                 return 0
             return Mock(run=run)
-        self.lease.finish.return_value = {'state':'deferred'}
-        result = self.run_worker(factory)
-        self.assertEqual(result['state'], 'deferred')
-        self.assertEqual(result['error_code'], 'source_history_limit')
-        self.lease.finish.assert_called_once_with('deferred', error_code='source_history_limit',
-                                                  error_scope='service:redgifs')
-        target.api._call.assert_not_called()
+        for code in ('rate_limited', 'source_history_limit'):
+            with self.subTest(code=code):
+                state = 'retry' if code == 'rate_limited' else 'succeeded'
+                self.lease.finish.reset_mock()
+                self.lease.finish.return_value = {'state': 'queued' if state == 'retry' else state}
+                result = self.run_worker(factory)
+                self.assertEqual(result['state'], 'retry' if state == 'retry' else 'source_succeeded')
+                if state == 'retry':
+                    self.lease.finish.assert_called_once_with('retry', error_code='rate_limited', error_scope='service:redgifs')
+                else:
+                    self.lease.finish.assert_called_once_with('succeeded', error_code='')
+                    self.assertEqual(result['history_coverage']['limited_types'], ['videos'])
 
     def test_policy_capability_and_busy_lease_stop_before_downloads(self):
         for field, value in (("policy_sha256", "b" * 64), ("root_uuid", PRODUCER), ("operation", "enrich")):

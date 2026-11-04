@@ -204,8 +204,8 @@ def execute(box, client, configuration, run_uuid):
         except SourceFailure as exc:
             # Missing/private accounts can return or grant access later. The
             # server checks missing profiles monthly and private profiles daily.
-            # Explicit Redgifs deletion retires only that account. Neither it
-            # nor a provider history limit proves successful source coverage.
+            # Explicit Redgifs deletion retires only that account. A history
+            # limit not consumed by the reviewed traversal remains unfinished.
             outcome = "deferred" if exc.code in {"authentication", "challenge", "source_history_limit", "account_deleted"} else "retry"
             error, error_scope = exc.code, exc.scope
         except SourcePaused:

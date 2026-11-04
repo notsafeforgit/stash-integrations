@@ -79,7 +79,7 @@ class PaginationTests(unittest.TestCase):
         self.assertEqual(list(target.gifs()), [])
         producer.traversed()
         saved = redgifs_history.decode(self.lease.pages[-1]['cursor'])
-        self.assertEqual(saved, dict(phase=5, page=1, limit=100, images=1, videos=1))
+        self.assertEqual(saved, dict(phase=7, page=1, limit=100, images=1, videos=1))
         self.assertEqual([r['page'] for r in calls], [101, 1, 1])
         self.assertFalse(producer.resume_cursor)
 
