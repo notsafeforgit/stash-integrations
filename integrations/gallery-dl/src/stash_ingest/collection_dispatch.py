@@ -93,6 +93,12 @@ class CollectionDispatcher:
                 if not self.save(state, after_collection=item["uuid"], failures=0, available_at=0, error_code=None):
                     return {"state": "contended"}
                 result = self.selected(item["uuid"])
+                # A full admission queue still contains executable work in
+                # other collections. Keep this page bounded, but visit peers
+                # instead of letting a fresh admission hide their queued jobs.
+                if result["state"] == "unavailable" and result.get("error_code") == "queue_full":
+                    waiting = True
+                    continue
                 if result["state"] not in ("waiting", "idle", "backoff"):
                     return {**result, "collection_uuid": item["uuid"]}
                 waiting |= result["state"] != "idle"

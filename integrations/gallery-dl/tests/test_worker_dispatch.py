@@ -94,29 +94,30 @@ class WorkerDispatchTests(unittest.TestCase):
               patch("stash_ingest.worker_dispatch.ProfileDispatcher") as download,
               patch("stash_ingest.worker_dispatch.CollectionDispatcher") as metadata):
             download.return_value.once.return_value = {"state": "yielded"}
-            metadata.return_value.once.return_value = {"state": "completed"}
+            metadata.return_value.once.side_effect = [{"state": "waiting"}, {"state": "completed"}, {"state": "waiting"}]
             with closing(self.open()) as box:
                 self.assertEqual(WorkerDispatcher(box, self.transport, self.profiles).once()["profile_id"], "download")
-            metadata_profile.assert_not_called()
+            metadata_profile.assert_called_once()
             with closing(self.open()) as box:
                 self.assertEqual(WorkerDispatcher(box, self.transport, self.profiles).once()["profile_id"], "metadata")
             with closing(self.open()) as box:
                 self.assertEqual(WorkerDispatcher(box, self.transport, self.profiles).once()["profile_id"], "download")
             self.assertEqual(download.call_count, 2)
-            self.assertEqual(metadata_profile.call_count, 1)
+            self.assertEqual(metadata_profile.call_count, 3)
 
     def test_process_death_after_selection_still_advances_to_peer(self):
         with (patch("stash_ingest.worker_dispatch.EnrichmentConfiguration"),
               patch("stash_ingest.worker_dispatch.ProfileDispatcher") as download,
               patch("stash_ingest.worker_dispatch.CollectionDispatcher") as metadata):
             download.return_value.once.side_effect = RuntimeError("process disappeared")
+            metadata.return_value.once.return_value = {"state": "waiting"}
             with closing(self.open()) as box, self.assertRaises(RuntimeError):
                 WorkerDispatcher(box, self.transport, self.profiles).once()
             metadata.return_value.once.return_value = {"state": "completed"}
             with closing(self.open()) as box:
                 self.assertEqual(WorkerDispatcher(box, self.transport, self.profiles).once()["profile_id"], "metadata")
 
-    def test_routine_priority_wins_after_rotation_and_recovery_uses_idle_capacity(self):
+    def test_metadata_interest_is_polled_and_server_controls_its_turn(self):
         self.document['profiles'][0]['priority'] = 0
         self.document['profiles'][1]['priority'] = 2
         self.profile_path.write_bytes(encode(self.document))
@@ -128,33 +129,33 @@ class WorkerDispatchTests(unittest.TestCase):
             worker = WorkerDispatcher(box, self.transport, self.profiles)
             worker.save(worker.state(), after_entry='download')
             daily.return_value.once.return_value = {'state': 'completed'}
-            recovery.return_value.once.return_value = {'state': 'completed'}
+            recovery.return_value.once.return_value = {'state': 'waiting'}
             self.assertEqual(worker.once()['profile_id'], 'download')
-            recovery.assert_not_called()
-            daily.return_value.once.return_value = {'state': 'idle'}
+            recovery.assert_called_once()
+            recovery.return_value.once.return_value = {'state': 'completed'}
             self.assertEqual(worker.once()['profile_id'], 'metadata')
+            self.assertEqual(daily.call_count, 1, 'the server-granted turn runs before another download')
 
     def test_broken_profile_is_reported_without_paths_or_access_values_and_peers_run(self):
-        with (patch("stash_ingest.worker_dispatch.ProfileDispatcher", side_effect=InvalidData("fixture-private-access /private/path")),
-              patch("stash_ingest.worker_dispatch.EnrichmentConfiguration"),
-              patch("stash_ingest.worker_dispatch.CollectionDispatcher") as metadata):
-            metadata.return_value.once.return_value = {"state": "completed"}
+        with (patch("stash_ingest.worker_dispatch.ProfileDispatcher") as download,
+              patch("stash_ingest.worker_dispatch.EnrichmentConfiguration", side_effect=InvalidData("fixture-private-access /private/path"))):
+            download.return_value.once.return_value = {"state": "completed"}
             with closing(self.open()) as box:
                 result = WorkerDispatcher(box, self.transport, self.profiles).once()
-                self.assertEqual(result["profile_id"], "metadata")
-                self.assertEqual(result["profiles"], [{"profile_id": "download", "state": "unavailable", "error_code": "worker_profile_unavailable"}])
+                self.assertEqual(result["profile_id"], "download")
+                self.assertEqual(result["profiles"], [{"profile_id": "metadata", "state": "unavailable", "error_code": "worker_profile_unavailable"}])
                 self.assertNotIn("fixture-private-access", encode(result).decode())
                 self.assertNotIn("/private/path", "\n".join(box.db.iterdump()))
 
     def test_capacity_is_reported_as_capacity_and_other_profiles_still_run(self):
-        with (patch("stash_ingest.worker_dispatch.ProfileDispatcher", side_effect=DispatchCapacity('enrichment_dispatch', 10000)),
+        with (patch("stash_ingest.worker_dispatch.ProfileDispatcher") as download,
               patch("stash_ingest.worker_dispatch.EnrichmentConfiguration"),
-              patch("stash_ingest.worker_dispatch.CollectionDispatcher") as metadata,
+              patch("stash_ingest.worker_dispatch.CollectionDispatcher", side_effect=DispatchCapacity('enrichment_dispatch', 10000)),
               closing(self.open()) as box):
-            metadata.return_value.once.return_value = {"state": "completed"}
+            download.return_value.once.return_value = {"state": "completed"}
             result = WorkerDispatcher(box, self.transport, self.profiles).once()
-            self.assertEqual(result['profile_id'], 'metadata')
-            self.assertEqual(result['profiles'], [{'profile_id': 'download', 'state': 'unavailable',
+            self.assertEqual(result['profile_id'], 'download')
+            self.assertEqual(result['profiles'], [{'profile_id': 'metadata', 'state': 'unavailable',
                 'error_code': 'dispatch_capacity_exhausted', 'resource': 'enrichment_dispatch', 'records': 10000, 'limit': 10000}])
 
     def test_saved_delivery_runs_without_loading_original_profile(self):
@@ -235,6 +236,35 @@ class CollectionDispatchTests(unittest.TestCase):
         self.selected.return_value.once.side_effect = [{"state": "waiting"}, {"state": "completed"}]
         with closing(self.open()) as box:
             self.assertEqual(self.dispatcher(box, self.transport, self.profile).once()["collection_uuid"], self.ids[1])
+
+    def test_full_admission_queue_does_not_hide_existing_work_in_a_peer(self):
+        self.selected.return_value.once.side_effect = [
+            {"state": "unavailable", "error_code": "queue_full", "next_attempt_at": 1060},
+            {"state": "completed"},
+        ]
+        with closing(self.open()) as box:
+            self.assertEqual(self.dispatcher(box, self.transport, self.profile).once()["collection_uuid"], self.ids[1])
+        self.assertEqual(self.selected.return_value.once.call_count, 2)
+
+    def test_full_admission_scan_is_bounded_and_resumes_after_restart(self):
+        self.ids = sorted(str(uuid.uuid4()) for _ in range(25))
+        self.selected.return_value.once.return_value = {"state": "unavailable", "error_code": "queue_full"}
+        with closing(self.open()) as box:
+            worker = self.dispatcher(box, self.transport, self.profile)
+            self.assertEqual(worker.once()["state"], "waiting")
+            self.assertEqual(worker.state()["after_collection"], self.ids[19])
+        self.assertEqual(self.selected.return_value.once.call_count, 20)
+        self.selected.reset_mock()
+        self.selected.return_value.once.return_value = {"state": "completed"}
+        with closing(self.open()) as box:
+            self.assertEqual(self.dispatcher(box, self.transport, self.profile).once()["collection_uuid"], self.ids[20])
+
+    def test_other_service_errors_still_stop_collection_traversal(self):
+        self.selected.return_value.once.return_value = {"state": "unavailable", "error_code": "rate_limited"}
+        with closing(self.open()) as box:
+            result = self.dispatcher(box, self.transport, self.profile).once()
+            self.assertEqual(result["error_code"], "rate_limited")
+        self.assertEqual(self.selected.return_value.once.call_count, 1)
 
     def test_discovery_outage_keeps_cursor_and_backoff_across_restart(self):
         self.pages.side_effect = Unavailable("native_unavailable", 503, 120)

@@ -296,7 +296,7 @@ class DetailDispatchTests(DetailFixture):
                 patch("stash_ingest.worker_dispatch.ProfileDispatcher") as download, \
                 patch("stash_ingest.worker_dispatch.DiscoveryDetailCollectionDispatcher") as detail:
             download.return_value.once.return_value = {"state": "yielded"}
-            detail.return_value.once.return_value = {"state": "completed"}
+            detail.return_value.once.side_effect = [{"state": "waiting"}, {"state": "completed"}, {"state": "waiting"}]
             self.assertEqual(WorkerDispatcher(self.box, transport, profiles).once()["profile_id"], "downloads")
             self.reopen()
             self.assertEqual(WorkerDispatcher(self.box, transport, profiles).once()["profile_id"], "details")

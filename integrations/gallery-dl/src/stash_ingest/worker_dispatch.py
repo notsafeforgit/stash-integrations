@@ -104,9 +104,12 @@ class WorkerDispatcher:
         entries = self.profiles.entries
         names = [entry["id"] for entry in entries]
         start = names.index(state["after_entry"]) + 1 if state["after_entry"] in names else 0
-        # Rotate fairly within a priority, but do not let queued historical
-        # work take a whole turn before available routine checks.
-        ordered = sorted(entries[start:] + entries[:start], key=lambda entry: entry.get('priority', 0))
+        # Express metadata interest before selecting another download. Stash
+        # grants its bounded turn or returns waiting; a busy download lane must
+        # not prevent the metadata claim that registers this scheduling interest.
+        # Rotate peers fairly and retain the ordinary download priority order.
+        ordered = sorted(entries[start:] + entries[:start],
+                         key=lambda entry: (entry['operation'] == 'download', entry.get('priority', 0)))
         skipped = []
         for entry in ordered:
             if not self.save(state, after_entry=entry["id"]):

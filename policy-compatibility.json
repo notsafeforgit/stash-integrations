@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "4fd07284b4d94a6a17c1ae5089d80f9cef12ca0f1cbdc6dfc7738e94e34be08b",
+  "implementation_sha256": "4262b36be8b06f5c6bb02fd91f51ad20cf31803c2cb76ce2dd61d054a4d57f46",
   "decision": "compatible",
-  "reason": "Scheduled dispatcher commands report temporary native API connection, 408, 429, 502, 503 and 504 failures as waiting with the existing retry exit status, preserving HTTP status and Retry-After without logging response bodies. Authentication, permission, contract, validation and unexpected server errors remain failures. Queued events, leases, receipts, source coverage, policies, downloader versions, schema 25, capture v1 and execution v8 are unchanged."
+  "reason": "Scheduled commands report temporary native API outages as waiting, preserving status and Retry-After; auth, validation and unexpected server errors remain failures. Metadata profiles are polled before download profiles to register native scheduling interest; denied claims fall through to downloads. A full admission queue no longer stops the bounded collection traversal from finding existing jobs. Server pacing, leases, cooldowns and the 64-job limit remain authoritative. Selection checkpoints retain their advance-before-execution meaning. Existing queue identities, receipts, coverage, downloader versions, schema 25, capture v1 and execution v8 remain unchanged."
 }

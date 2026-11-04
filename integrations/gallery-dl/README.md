@@ -3058,6 +3058,10 @@ enrichment requester gets the next turn after current downloads drain. Abandoned
 requests expire, and a metadata start restores download preference. Held/stale
 targets and cooling dependencies cannot reserve unrelated services. This server
 policy coordinates collections even when different workers submit claims.
+Historical metadata gets up to 60 seconds per claimed attempt before queued
+downloads regain priority. Heartbeats cannot extend that turn; shared request
+spacing and provider cooldowns still apply. Without queued downloads, metadata
+may continue using idle capacity.
 Legacy enrichment queue mapping, review resolution and production launcher
 conversion still precede service activation.
 
@@ -3174,6 +3178,14 @@ peers a turn; an unreadable profile reports `worker_profile_unavailable` without
 printing its path, exception or access values. Metadata discovery honors native
 retry delays and retains its own failure/idle backoff. Native service fairness
 and leases remain authoritative across different workers.
+
+Metadata entries are polled before download entries so busy download profiles
+cannot prevent them from expressing scheduling interest. A blocked metadata
+claim falls through to downloads in the same pass; Stash decides when the next
+bounded metadata turn is due. If admitting a fresh metadata target reports
+`queue_full`, collection traversal continues through its bounded 20-collection
+page to find already queued jobs. This neither raises the queue limit nor clears
+the per-collection admission retry deadline.
 
 Exit 0 means a successful or idle dispatch cycle with no reported local pending
 or review work. Exit 2 means work, backoff or review remains, or an inspected

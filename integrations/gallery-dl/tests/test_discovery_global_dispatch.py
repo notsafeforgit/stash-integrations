@@ -50,15 +50,20 @@ class GlobalDiscoveryDispatchTests(unittest.TestCase):
             stack.enter_context(patch("stash_ingest.worker_dispatch." + name))
         return result
 
-    def test_all_three_busy_operations_rotate_across_process_reopens(self):
+    def test_metadata_peers_rotate_and_denied_claims_allow_downloads_across_reopens(self):
         with ExitStack() as stack:
             mocked = self.patched_profiles(stack)
-            for expected in ("download", "metadata", "discovery") * 2:
+            for expected in ("metadata", "discovery", "download") * 2:
+                mocked["CollectionDispatcher"].return_value.once.return_value = {
+                    "state": "waiting" if expected == "download" else "completed"}
+                mocked["DiscoveryCollectionDispatcher"].return_value.once.return_value = {
+                    "state": "waiting" if expected == "download" else "page_delivered"}
                 with closing(self.open()) as box:
                     result = WorkerDispatcher(box, self.transport, self.profiles).once()
                     self.assertEqual(result["profile_id"], expected)
-            for value in mocked.values():
-                self.assertEqual(value.return_value.once.call_count, 2)
+            self.assertEqual(mocked["ProfileDispatcher"].return_value.once.call_count, 2)
+            self.assertEqual(mocked["CollectionDispatcher"].return_value.once.call_count, 4)
+            self.assertEqual(mocked["DiscoveryCollectionDispatcher"].return_value.once.call_count, 4)
 
     def test_both_saved_deliveries_run_without_their_missing_profiles(self):
         with closing(self.open()) as box:
@@ -82,7 +87,7 @@ class GlobalDiscoveryDispatchTests(unittest.TestCase):
         with closing(self.open()) as box:
             self.assertEqual(WorkerDispatcher(box, self.transport, self.profiles).state(), state)
 
-    def test_process_death_after_discovery_selection_advances_to_download(self):
+    def test_process_death_after_discovery_selection_advances_to_metadata_peer(self):
         with ExitStack() as stack:
             mocked = self.patched_profiles(stack)
             mocked["DiscoveryCollectionDispatcher"].return_value.once.side_effect = RuntimeError("process stopped")
@@ -92,7 +97,7 @@ class GlobalDiscoveryDispatchTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     worker.once()
             with closing(self.open()) as box:
-                self.assertEqual(WorkerDispatcher(box, self.transport, self.profiles).once()["profile_id"], "download")
+                self.assertEqual(WorkerDispatcher(box, self.transport, self.profiles).once()["profile_id"], "metadata")
 
     def test_competing_rotation_keeps_delivered_receipt_but_prevents_new_selection(self):
         with closing(self.open()) as box, closing(self.open()) as peer:
