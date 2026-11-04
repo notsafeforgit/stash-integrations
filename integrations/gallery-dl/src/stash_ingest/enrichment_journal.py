@@ -151,7 +151,14 @@ class EnrichmentJournal:
         return self.find(job)
 
     def change(self, value, *, state=None, phase=None, body=False, reserved=None):
+        with self.box.transaction():
+            return self.change_in_transaction(value, state=state, phase=phase, body=body, reserved=reserved)
+
+    def change_in_transaction(self, value, *, state=None, phase=None, body=False, reserved=None):
+        """Keep journal validation when maintenance atomically reconciles cursors."""
         self._require_lock()
+        if not self.db.in_transaction:
+            raise Conflict("Enrichment changes require an outbox transaction")
         state = encode(value.state if state is None else state, STATE_LIMIT)
         data = value.body if body is False else body
         size = value.reserved_bytes if reserved is None else reserved
@@ -167,13 +174,12 @@ class EnrichmentJournal:
                     raise Conflict('Captured reuse cannot discard pending source evidence')
             else:
                 self.client_type._completion(completed.get(self.completion_field), value.job_uuid, work=value.definition["arguments"])
-        with self.box.transaction():
-            current = self.find(value.job_uuid)
-            if current is None or current.revision != value.revision or current.phase == "completed":
-                raise Conflict("Enrichment execution changed")
-            self.db.execute(f"""UPDATE {self.table} SET revision=revision+1,phase=?,state=?,state_sha256=?,body=?,body_sha256=?,
-                reserved_bytes=?,updated_at=? WHERE job_uuid=?""", (selected, state, digest(state), data,
-                digest(data) if data is not None else None, size, self.box.clock(), value.job_uuid))
+        current = self.find(value.job_uuid)
+        if current is None or current.revision != value.revision or current.phase == "completed":
+            raise Conflict("Enrichment execution changed")
+        self.db.execute(f"""UPDATE {self.table} SET revision=revision+1,phase=?,state=?,state_sha256=?,body=?,body_sha256=?,
+            reserved_bytes=?,updated_at=? WHERE job_uuid=?""", (selected, state, digest(state), data,
+            digest(data) if data is not None else None, size, self.box.clock(), value.job_uuid))
         return self.find(value.job_uuid)
 
     def reserve(self, value):

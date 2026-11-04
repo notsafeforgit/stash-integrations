@@ -1,8 +1,8 @@
-"""Retire obsolete enrichment cursors using complete profiles and native approvals.
+"""Reconcile terminal local executions and retire obsolete enrichment cursors.
 
 The caller holds deployment/backup exclusion while inventorying every profile
-directory sharing the outbox. No website requests, job edits or receipt copies
-are needed. Original job definitions remain immutable after approved upgrades.
+directory sharing the outbox. Native jobs and original job definitions remain
+immutable. Pending source payloads are never discarded by maintenance.
 """
 
 import argparse
@@ -19,6 +19,7 @@ from .encoding import InvalidData, decode, identifier
 from .endpoint import origin
 from .enrichment_configuration import EnrichmentConfiguration, SCHEMA
 from .enrichment_journal import EnrichmentJournal
+from .enrichment_reconcile import terminal_plan
 from .events import sha256
 from .outbox import Outbox
 
@@ -112,9 +113,11 @@ def reconcile(box, library, directories, *, apply=False):
     with journal.execution() as acquired:
         if not acquired:
             return {'state': 'waiting', 'reason': 'metadata_execution_active'}
-        # All queue reads and cursor removals share a transaction. Actual jobs,
-        # pending deliveries and publication checkpoints are never mutated here.
+        # Local terminal acknowledgements and cursor removals commit together.
+        # Native jobs and publication checkpoints are read-only evidence.
         with box.transaction():
+            plans, executions = terminal_plan(journal, library)
+            reconciled = {value.job_uuid for value, _, _ in plans}
             policies = {r[0] for table in TABLES for r in box.db.execute('SELECT DISTINCT policy_sha256 FROM ' + table)}
             if len(policies) > MAX_POLICIES or any(not sha256(p) for p in policies):
                 raise InvalidData('Invalid or excessive dispatcher policy inventory')
@@ -140,6 +143,8 @@ def reconcile(box, library, directories, *, apply=False):
                     protect(effective, 'native_execution_policy_not_configured')
 
             for row in box.db.execute("SELECT job_uuid FROM enrichment_executions WHERE phase IN ('active','review')"):
+                if row['job_uuid'] in reconciled:
+                    continue
                 value = journal.find(row['job_uuid'])
                 original = value.definition['arguments']['policy_sha256']
                 if original not in candidates:
@@ -165,6 +170,10 @@ def reconcile(box, library, directories, *, apply=False):
             # before deletion. Any incomplete/changing inventory aborts the pass.
             if inventory(directories) != snapshot:
                 raise InvalidData('Profile inventory changed before retirement')
+            if apply:
+                for value, phase, state in plans:
+                    journal.change_in_transaction(value, phase=phase, state=state, body=None, reserved=0)
+            executions['reconciled'] = len(plans) if apply else 0
             counts = {}
             for table in TABLES:
                 total = box.db.execute('SELECT count(*) FROM ' + table).fetchone()[0]
@@ -178,7 +187,7 @@ def reconcile(box, library, directories, *, apply=False):
                                  'remaining': total - eligible if apply else total}
             return {'state': 'applied' if apply else 'preview', 'configured_policies': len(configured),
                     'retired_policies': retired, 'protected_policies': sorted(protected),
-                    'protection_reasons': dict(reasons), 'cursors': counts,
+                    'protection_reasons': dict(reasons), 'cursors': counts, 'executions': executions,
                     'inventory_sha256': hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest()}
 
 

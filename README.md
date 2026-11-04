@@ -194,3 +194,11 @@ Deploy v8 through explicit policy upgrades while workers are quiesced and no
 backup captures configuration; retain producer identities, source windows,
 archives and saved page progress. Do not reinterpret retained v4/v5/v6/v7 admissions
 without that review. Producer schema 25 is unchanged.
+
+Release v0.6.35 also reconciles local `active`/`review` enrichment records during
+`stash_ingest.dispatch_reconcile`. Matching terminal native jobs release stale
+local protection, including records under retired policies. Success requires the
+actual native publication; failed and cancelled attempts remain failed locally.
+Accepted checkpoints are verified, and unsent bodies or reservations are kept.
+Reconciliation and cursor retirement commit atomically. The existing scheduled
+maintenance entrypoint can run this without website requests or new backups.

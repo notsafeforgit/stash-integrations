@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "1503eddb22db6da9689d30f50a32e61e405751278fb42b562e4a724a1737bf7d",
+  "implementation_sha256": "05aa302f6d7c099d085859886dc8d29703aa95a83fa6776f324471e9c58d8d77",
   "decision": "compatible",
-  "reason": "Add local, verified retirement of obsolete enrichment dispatch bookmarks from complete profile inventories and native upgrade approvals. Preserve admitted command meaning, active policies, pending/review evidence, immutable job definitions, delivery checkpoints, capture semantics and execution v8; fingerprint inventory never loads credentials or changes runtime policy identities."
+  "reason": "Reconcile stale local enrichment executions against matching immutable native terminal jobs and verified checkpoint/publication receipts during existing policy maintenance. Preserve unacknowledged payloads, reservations, unfinished jobs, failed-attempt outcomes and transaction rollback. No admitted command, capture, cursor or execution-v8 semantics change."
 }

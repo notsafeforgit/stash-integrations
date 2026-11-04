@@ -16,7 +16,7 @@ from stash_ingest.encoding import InvalidData
 from stash_ingest.enrichment_configuration import EnrichmentConfiguration, SCHEMA
 from stash_ingest.enrichment_dispatch import EnrichmentDispatcher
 from stash_ingest.enrichment_journal import EnrichmentJournal
-from stash_ingest.outbox import Outbox
+from stash_ingest.outbox import Outbox, Conflict
 from helpers import PRODUCER
 from test_enrichment_execution import execution_fixture
 import test_enrichment_dispatch as fixtures
@@ -45,7 +45,10 @@ class DispatchReconcileTests(unittest.TestCase):
 CREATE TABLE native_schema(singleton INTEGER PRIMARY KEY,lineage TEXT);
 INSERT INTO native_schema VALUES(1,'org.notsafeforgit.stash.native-archive');
 CREATE TABLE ingest_producers(uuid TEXT PRIMARY KEY);
-CREATE TABLE archive_jobs(uuid TEXT PRIMARY KEY,kind TEXT,state TEXT,arguments TEXT,fence INTEGER);
+CREATE TABLE archive_jobs(uuid TEXT PRIMARY KEY,kind TEXT,state TEXT,arguments TEXT,fence INTEGER,result TEXT,error_code TEXT);
+CREATE TABLE enrichment_checkpoint_receipts(job_uuid TEXT,revision INTEGER,digest TEXT,fence INTEGER,record_count INTEGER,pending_count INTEGER,unresolved_count INTEGER);
+CREATE TABLE enrichment_publications(job_uuid TEXT,checkpoint_revision INTEGER,fence INTEGER,completion_uuid TEXT);
+CREATE TABLE enrichment_completions(uuid TEXT,target_uuid TEXT,expected_revision INTEGER,capture_count INTEGER);
 CREATE TABLE metadata_worker_policy_upgrades(id INTEGER PRIMARY KEY,kind TEXT,original_policy_sha256 TEXT,policy_sha256 TEXT,request_uuid TEXT);
 CREATE TABLE metadata_worker_attempt_policies(job_uuid TEXT,fence INTEGER,policy_sha256 TEXT);
 ''')
@@ -60,7 +63,7 @@ CREATE TABLE metadata_worker_attempt_policies(job_uuid TEXT,fence INTEGER,policy
     def native_job(self, job, policy, state='queued'):
         arguments = copy.deepcopy(execution_fixture()['job']['arguments'])
         arguments['policy_sha256'] = policy
-        self.native.execute("INSERT INTO archive_jobs VALUES(?,'post.enrich',?,?,1)", (job, state, json.dumps(arguments)))
+        self.native.execute("INSERT INTO archive_jobs(uuid,kind,state,arguments,fence) VALUES(?,'post.enrich',?,?,1)", (job, state, json.dumps(arguments)))
         return arguments
 
     def approval(self, old, new):
@@ -100,7 +103,7 @@ CREATE TABLE metadata_worker_attempt_policies(job_uuid TEXT,fence INTEGER,policy
         journal = EnrichmentJournal(self.box)
         with journal.execution():
             value = journal.prepare(fixture)
-        self.native.execute("INSERT INTO archive_jobs VALUES(?,'post.enrich','queued',?,0)",
+        self.native.execute("INSERT INTO archive_jobs(uuid,kind,state,arguments,fence) VALUES(?,'post.enrich','queued',?,0)",
                             (value.job_uuid, json.dumps(value.definition['arguments'])))
         old = self.cursor('a' * 64, job_after=321)
         self.approval('a' * 64, self.current)
@@ -145,13 +148,17 @@ CREATE TABLE metadata_worker_attempt_policies(job_uuid TEXT,fence INTEGER,policy
         journal = EnrichmentJournal(self.box)
         with journal.execution():
             value = journal.prepare(fixture)
-        self.native.execute("INSERT INTO archive_jobs VALUES(?,'post.enrich','failed',?,1)",
+        self.native.execute("INSERT INTO archive_jobs(uuid,kind,state,arguments,fence) VALUES(?,'post.enrich','failed',?,1)",
                             (value.job_uuid, json.dumps(value.definition['arguments'])))
         self.cursor('a' * 64)
         self.approval('a' * 64, self.current)
         before = tuple(self.box.db.execute('SELECT * FROM enrichment_executions').fetchone())
         self.assertEqual(self.run_cleanup()['retired_policies'], ['a' * 64])
-        self.assertEqual(tuple(self.box.db.execute('SELECT * FROM enrichment_executions').fetchone()), before)
+        reconciled = journal.find(value.job_uuid)
+        self.assertEqual(reconciled.phase, 'failed')
+        self.assertEqual(reconciled.state['native_outcome'], 'failed')
+        self.assertEqual(reconciled.definition, value.definition)
+        self.assertEqual(self.run_cleanup()['executions']['eligible'], 0)
 
     def test_all_shared_directories_and_external_dispatcher_references_are_preserved(self):
         second = self.root / 'second'
@@ -233,3 +240,119 @@ CREATE TABLE metadata_worker_attempt_policies(job_uuid TEXT,fence INTEGER,policy
 
 if __name__ == '__main__':
     unittest.main()
+
+class TerminalExecutionReconcileTests(DispatchReconcileTests):
+    def terminal(self, state='succeeded', phase='active', pending=False):
+        fixture = execution_fixture()
+        fixture['job']['arguments']['policy_sha256'] = self.current
+        journal = EnrichmentJournal(self.box)
+        with journal.execution():
+            value = journal.prepare(fixture)
+            receipt = {'job_uuid': value.job_uuid, 'revision': 1, 'sha256': 'd' * 64, 'fence': 1,
+                       'record_count': 2, 'pending_count': 0, 'unresolved_count': 0}
+            intent = {'kind': 'publish', 'receipt': receipt, 'lease': {'fence': 1, 'owner_uuid': str(uuid.uuid4())}}
+            value = journal.change(value, phase=phase, state={**value.state, 'checkpoint': receipt,
+                                    'pending': intent if pending else None})
+        work = value.definition['arguments']
+        publication = {'job_uuid': value.job_uuid, 'checkpoint_revision': 1, 'checkpoint_sha256': 'd' * 64,
+                       'fence': 1, 'record_count': 2, 'capture_count': 2, 'unresolved_count': 0,
+                       'completion_uuid': str(uuid.uuid4())}
+        self.native.execute("INSERT INTO archive_jobs VALUES(?,'post.enrich',?,?,1,?,?)",
+                            (value.job_uuid, state, json.dumps(work), json.dumps(publication), 'post_identity_conflict' if state == 'failed' else ''))
+        self.native.execute('INSERT INTO enrichment_checkpoint_receipts VALUES(?,1,?,1,2,0,0)', (value.job_uuid, 'd' * 64))
+        if state == 'succeeded':
+            self.native.execute('INSERT INTO enrichment_publications VALUES(?,1,1,?)', (value.job_uuid, publication['completion_uuid']))
+            self.native.execute('INSERT INTO enrichment_completions VALUES(?,?,1,2)', (publication['completion_uuid'], work['target_uuid']))
+        return journal, value, publication
+
+    def test_native_success_recovers_lost_response_under_current_policy_without_deleting_evidence(self):
+        journal, value, publication = self.terminal(pending=True, phase='review')
+        original = '\n'.join(self.box.db.iterdump())
+        native = '\n'.join(self.native.iterdump())
+        preview = self.run_cleanup(apply=False)
+        self.assertEqual(preview['executions']['eligible'], 1)
+        self.assertEqual(preview['executions']['reconciled'], 0)
+        self.assertEqual('\n'.join(self.box.db.iterdump()), original)
+        result = self.run_cleanup()
+        after = journal.find(value.job_uuid)
+        self.assertEqual(result['executions']['native_outcomes'], {'succeeded': 1})
+        self.assertEqual(after.phase, 'completed')
+        self.assertEqual(after.state['publication'], publication)
+        self.assertEqual(after.state['checkpoint'], value.state['checkpoint'])
+        self.assertIsNone(after.state['pending'])
+        self.assertEqual('\n'.join(self.native.iterdump()), native)
+        self.assertEqual(self.run_cleanup()['executions']['reconciled'], 0)
+        self.assertEqual(journal.find(value.job_uuid), after)
+
+    def test_failed_and_cancelled_review_attempts_remain_failed(self):
+        for state in ('failed', 'cancelled'):
+            with self.subTest(state=state):
+                journal, value, _ = self.terminal(state, 'review', pending=True)
+                self.run_cleanup()
+                after = journal.find(value.job_uuid)
+                self.assertEqual(after.phase, 'failed')
+                self.assertEqual(after.state['native_outcome'], state)
+                self.assertEqual(after.state['error_code'], 'native_job_' + state)
+                self.assertEqual(after.state['checkpoint'], value.state['checkpoint'])
+                self.assertIsNone(after.state['publication'])
+                self.assertIsNone(after.state['pending'])
+
+    def test_missing_or_mismatched_publication_never_manufactures_success(self):
+        journal, value, _ = self.terminal()
+        for sql in ('UPDATE enrichment_completions SET target_uuid="unrelated"',
+                    'DELETE FROM enrichment_publications'):
+            self.native.execute(sql)
+            self.assertEqual(self.run_cleanup()['executions']['protected'], {'publication_not_confirmed': 1})
+            self.assertEqual(journal.find(value.job_uuid), value)
+
+    def test_terminal_job_cannot_discard_unacknowledged_body_or_reservation(self):
+        value = fixtures.EnrichmentDispatchTests.stage(self, self.box, policy=self.current)
+        journal = EnrichmentJournal(self.box)
+        self.native.execute("INSERT INTO archive_jobs(uuid,kind,state,arguments,fence) VALUES(?,'post.enrich','failed',?,1)",
+                            (value.job_uuid, json.dumps(value.definition['arguments'])))
+        self.assertEqual(self.run_cleanup()['executions']['protected'], {'undelivered_payload_or_reservation': 1})
+        self.assertEqual(journal.find(value.job_uuid), value)
+        with journal.execution():
+            reserved = journal.reserve(journal.prepare(execution_fixture()))
+        self.native.execute("INSERT INTO archive_jobs(uuid,kind,state,arguments,fence) VALUES(?,'post.enrich','cancelled',?,1)",
+                            (reserved.job_uuid, json.dumps(reserved.definition['arguments'])))
+        self.assertEqual(self.run_cleanup()['executions']['protected'], {'undelivered_payload_or_reservation': 2})
+        self.assertEqual(journal.find(reserved.job_uuid), reserved)
+
+    def test_unknown_or_unconfirmed_delivery_intent_remains_protected(self):
+        journal, value, _ = self.terminal('failed', pending=True)
+        self.native.execute('UPDATE enrichment_checkpoint_receipts SET digest=?', ('f' * 64,))
+        self.assertEqual(self.run_cleanup()['executions']['protected'], {'checkpoint_not_confirmed': 1})
+        self.assertEqual(journal.find(value.job_uuid), value)
+        with journal.execution():
+            value = journal.change(value, state={**value.state, 'pending': {'kind': 'future_operation'}})
+        self.assertEqual(self.run_cleanup()['executions']['protected'], {'unknown_delivery_intent': 1})
+        self.assertEqual(journal.find(value.job_uuid), value)
+
+    def test_inventory_change_rolls_back_local_reconciliation_and_cursors_together(self):
+        journal, value, _ = self.terminal('failed', 'review', pending=True)
+        self.cursor('a' * 64)
+        before = '\n'.join(self.box.db.iterdump())
+        snapshot = inventory([self.profiles])
+        with patch('stash_ingest.dispatch_reconcile.inventory', side_effect=[snapshot, {**snapshot, 'policies': []}]):
+            with self.assertRaises(InvalidData):
+                self.run_cleanup()
+        self.assertEqual('\n'.join(self.box.db.iterdump()), before)
+        self.assertEqual(journal.find(value.job_uuid), value)
+
+    def test_journal_validation_failure_rolls_back_the_entire_batch(self):
+        journal, value, _ = self.terminal('failed')
+        self.terminal('succeeded')
+        before = '\n'.join(self.box.db.iterdump())
+        change = EnrichmentJournal.change_in_transaction
+        calls = 0
+        def interrupted(instance, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise Conflict('simulated concurrent update')
+            return change(instance, *args, **kwargs)
+        with patch.object(EnrichmentJournal, 'change_in_transaction', interrupted):
+            with self.assertRaises(Conflict):
+                self.run_cleanup()
+        self.assertEqual('\n'.join(self.box.db.iterdump()), before)
