@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from stash_ingest.cli import main
-from stash_ingest.client import Client
+from stash_ingest.client import Client, Unavailable
 from stash_ingest.command_errors import describe, report
 from stash_ingest.encoding import InvalidData, encode
 from stash_ingest.outbox import Outbox
@@ -52,6 +52,30 @@ class WorkerDiagnosticsTests(unittest.TestCase):
             return connect(*args, **kwargs)
 
         return patch('stash_ingest.outbox.sqlite3.connect', side_effect=open_database)
+
+    def test_temporary_api_outage_yields_without_consuming_queued_event(self):
+        event = encode(capture())
+        with closing(Outbox(self.path, self.endpoint, PRODUCER)) as box:
+            box.enqueue(event)
+        for error in [Unavailable('network_unavailable'), Unavailable('http_error', 503, 120),
+                      Unavailable('queue_full', 429, 60)]:
+            with self.subTest(status=error.status), patch('stash_ingest.cli.drain_once', side_effect=error):
+                status, stdout, stderr = self.invoke(main, ['drain'])
+                self.assertEqual((status, stderr), (2, ''))
+                result = json.loads(stdout)
+                self.assertEqual(result['state'], 'waiting')
+                self.assertEqual(result['http_status'], error.status)
+                self.assertGreaterEqual(result['retry_after_seconds'], max(30, error.retry_after))
+                with closing(Outbox(self.path, self.endpoint, PRODUCER)) as box:
+                    self.assertEqual(box.db.execute('SELECT body FROM events').fetchone()[0], event)
+
+    def test_authentication_contract_and_server_bugs_remain_failures(self):
+        for error in [Unavailable('stash_token_rejected', 401), Unavailable('outside_scope', 403),
+                      Unavailable('incompatible_server'), Unavailable('http_error', 500)]:
+            with self.subTest(error=error.code), patch('stash_ingest.cli.drain_once', side_effect=error):
+                status, stdout, stderr = self.invoke(main, ['drain'])
+                self.assertEqual((status, stdout), (1, ''))
+                self.assertIn(error.code, stderr)
 
     def test_cli_real_writer_contention_reports_sqlite_code_and_location_then_reopens(self):
         event = encode(capture())

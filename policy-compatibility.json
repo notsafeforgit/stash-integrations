@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "d98903e5692541b037b0fa06ff00826e39b80841fd4e39998fbddd8b61682702",
+  "implementation_sha256": "4fd07284b4d94a6a17c1ae5089d80f9cef12ca0f1cbdc6dfc7738e94e34be08b",
   "decision": "compatible",
-  "reason": "Recognize structured HTTP errors hidden by gallery-dl metadata exception wrappers. Missing or gone children use the existing terminal not_found outcome; 429, authentication, access and timeout failures retain their existing retry classifications, and unknown or server failures remain retryable. Saved parent observations, compact unresolved references, HTTP request budgets and Retry-After reporting remain intact. No response bodies or credentials are retained. Execution v8, capture v1, schema 25, policies, downloader versions, archives, identities, source coverage and cursors are unchanged."
+  "reason": "Scheduled dispatcher commands report temporary native API connection, 408, 429, 502, 503 and 504 failures as waiting with the existing retry exit status, preserving HTTP status and Retry-After without logging response bodies. Authentication, permission, contract, validation and unexpected server errors remain failures. Queued events, leases, receipts, source coverage, policies, downloader versions, schema 25, capture v1 and execution v8 are unchanged."
 }

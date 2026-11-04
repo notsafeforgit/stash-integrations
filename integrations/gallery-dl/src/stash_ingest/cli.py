@@ -411,7 +411,16 @@ def main(argv=None):
                 incomplete |= any(item["state"] != "idle" for item in output.get("profiles", []))
             return 0 if output["state"] in ("idle", "source_succeeded", "completed", "page_delivered") and not incomplete else 2
         return 0
-    except (InvalidData, Unavailable, Capacity, SourcePaused) as exc:
+    except Unavailable as exc:
+        if args.command in {"drain", "dispatch", "dispatch-all", "submit-runs", "resolve-sources"} and (
+                exc.code == "network_unavailable" or exc.status in (408, 429, 502, 503, 504)):
+            print(json.dumps({"state": "waiting", "error_code": "native_temporarily_unavailable",
+                              "http_status": exc.status, "retry_after_seconds": max(30, exc.retry_after)},
+                             sort_keys=True))
+            return 2
+        print(str(exc), file=sys.stderr)
+        return 1
+    except (InvalidData, Capacity, SourcePaused) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     except (OSError, sqlite3.Error) as error:
