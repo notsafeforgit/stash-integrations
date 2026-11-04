@@ -49,18 +49,15 @@ class RedgifsHistoryTests(unittest.TestCase):
         redgifs_history.install(self.target, self.producer, resume)
         return self.target.gifs()
 
-    def test_limit_expands_supported_filters_but_unresolved_gap_cannot_finish(self):
-        values = []
-        with self.assertRaises(SourceFailure) as raised:
-            for value in self.install():
-                values.append(value)
-        self.assertEqual(raised.exception.code, 'source_history_limit')
+    def test_limit_completes_available_history_after_all_useful_views_are_exhausted(self):
+        values = list(self.install())
         self.assertEqual([(r.get('type'), r['order'], r['page']) for r in self.calls],
                          [(None, 'new', 1), (None, 'new', 2), (None, 'new', 3),
                           ('i', 'new', 1), ('i', 'new', 2),
-                          ('g', 'new', 1), ('g', 'new', 2), ('g', 'old', 1), ('g', 'old', 2)])
-        self.assertEqual(len(values), 8)
-        self.assertIs(self.producer.source_failure, raised.exception)
+                          ('g', 'new', 1), ('g', 'new', 2), ('g', 'old', 1), ('g', 'old', 2),
+                          ('g', 'best', 1), ('g', 'best', 2), ('g', 'best', 3)])
+        self.assertEqual(len(values), 10)
+        self.assertIsNone(self.producer.source_failure)
         self.assertEqual(self.producer.redgifs_history_coverage, {
             'policy': 'available', 'page_limit': 2, 'image_pages': 2, 'video_pages': 5,
             'limited_types': ['videos']})
@@ -80,8 +77,7 @@ class RedgifsHistoryTests(unittest.TestCase):
 
     def test_numeric_legacy_checkpoint_is_used_exactly_before_upgrade(self):
         resume = {'extractor': 'redgifs:user', 'url': URL, 'cursor': '3', 'item': ''}
-        with self.assertRaises(SourceFailure):
-            list(self.install(resume))
+        list(self.install(resume))
         self.assertEqual(self.producer.pages[0], resume)
         self.assertEqual(self.calls[0]['page'], 3)
         self.assertEqual(redgifs_history.decode(self.producer.pages[1]['cursor'])['phase'], 1)
@@ -95,41 +91,41 @@ class RedgifsHistoryTests(unittest.TestCase):
         iterator.close()
         self.calls.clear()
         self.producer = Producer()
-        with self.assertRaises(SourceFailure):
-            list(self.install(resume))
+        list(self.install(resume))
         self.assertEqual(self.producer.pages[0], resume)
         self.assertEqual([(r['type'], r['order'], r['page']) for r in self.calls],
-                         [('g', 'old', 1), ('g', 'old', 2)])
+                         [('g', 'old', 1), ('g', 'old', 2),
+                          ('g', 'best', 1), ('g', 'best', 2), ('g', 'best', 3)])
         self.assertEqual(self.producer.redgifs_history_coverage['limited_types'], ['videos'])
 
     def test_completed_checkpoint_survives_lost_finish_without_more_requests(self):
-        self.counts['g'] = 3
         list(self.install())
         resume = self.producer.pages[-1]
-        self.assertEqual(redgifs_history.decode(resume['cursor'])['phase'], 5)
+        self.assertEqual(redgifs_history.decode(resume['cursor'])['phase'], 7)
         self.calls.clear()
         self.producer = Producer()
         list(self.install(resume))
         self.assertEqual(self.calls, [])
         self.assertEqual(self.producer.pages, [resume])
-        self.assertEqual(self.producer.redgifs_history_coverage['limited_types'], [])
+        self.assertEqual(self.producer.redgifs_history_coverage['limited_types'], ['videos'])
 
-    def test_legacy_terminal_checkpoint_with_a_gap_remains_unresolved(self):
+    def test_legacy_terminal_checkpoint_runs_popularity_before_completing(self):
         resume = {'extractor': 'redgifs:user', 'url': URL, 'cursor': redgifs_history.encode(
-            dict(phase=5, page=1, limit=2, images=2, videos=5)), 'item': ''}
-        with self.assertRaises(SourceFailure) as raised:
-            list(self.install(resume))
-        self.assertEqual(raised.exception.code, 'source_history_limit')
-        self.assertEqual(self.calls, [])
-        self.assertEqual(self.producer.pages, [resume])
+            dict(phase=5, page=1, limit=2, images=2, videos=5)).replace(
+                redgifs_history.PREFIX, redgifs_history.LEGACY_PREFIX), 'item': ''}
+        list(self.install(resume))
+        self.assertEqual([(r['type'], r['order'], r['page']) for r in self.calls],
+                         [('g', 'best', 1), ('g', 'best', 2), ('g', 'best', 3)])
+        self.assertEqual(self.producer.pages[0], resume)
+        self.assertEqual(redgifs_history.decode(self.producer.pages[-1]['cursor'])['phase'], 7)
         self.assertEqual(self.producer.redgifs_history_coverage['limited_types'], ['videos'])
 
     def test_rate_limit_at_each_filtered_pass_preserves_page_and_requires_retry(self):
-        for phase in range(1, 5):
+        for phase in range(1, 7):
             with self.subTest(phase=phase):
                 self.setUp()
-                self.counts = {'': 3, 'i': 3, 'g': 3}
-                state = dict(phase=phase, page=1, limit=2, images=3, videos=3)
+                self.counts = {'': 5, 'i': 5, 'g': 5}
+                state = dict(phase=phase, page=1, limit=2, images=5, videos=5)
                 resume = {'extractor':'redgifs:user','url':URL,'cursor':redgifs_history.encode(state),'item':''}
                 original = self.call
                 failure = SourceFailure('rate_limited', 'service:redgifs')
@@ -146,9 +142,44 @@ class RedgifsHistoryTests(unittest.TestCase):
                 self.target.api._call = original
                 list(self.install(resume))
                 self.assertEqual(self.calls[0]['page'], 1)
-                self.assertEqual(self.calls[0]['type'], 'i' if phase < 3 else 'g')
-                self.assertEqual(self.calls[0]['order'], 'old' if phase in (2, 4) else 'new')
-                self.assertEqual(self.producer.redgifs_history_coverage['limited_types'], [])
+                self.assertEqual(self.calls[0]['type'], 'i' if phase in (1, 2, 5) else 'g')
+                self.assertEqual(self.calls[0]['order'], 'best' if phase >= 5 else 'old' if phase in (2, 4) else 'new')
+                self.assertEqual(self.producer.redgifs_history_coverage['limited_types'], ['images', 'videos'])
+
+    def test_rate_limit_after_last_popularity_page_is_not_a_confirmed_ceiling(self):
+        original = self.call
+        def call(endpoint, params):
+            if params['order'] == 'best' and params['page'] == 3:
+                self.producer.fail_source('rate_limited', 'service:redgifs')
+            return original(endpoint, params)
+        self.target.api._call = call
+        with self.assertRaises(SourceFailure) as raised:
+            list(self.install())
+        self.assertEqual(raised.exception.code, 'rate_limited')
+        self.assertFalse(hasattr(self.producer, 'redgifs_history_coverage'))
+        resume = self.producer.pages[-1]
+        state = redgifs_history.decode(resume['cursor'])
+        self.assertEqual((state['phase'], state['page']), (6, 3))
+        self.calls.clear()
+        self.producer = Producer()
+        self.target.api._call = original
+        list(self.install(resume))
+        self.assertEqual([(r['order'], r['page']) for r in self.calls], [('best', 3)])
+        self.assertIsNone(self.producer.source_failure)
+
+    def test_popularity_can_retrieve_a_post_missing_from_newest_and_oldest(self):
+        self.target.per_page = 1
+        def call(_, params):
+            if params.get('type') == 'i':
+                return {'pages': 0, 'total': 0, 'gifs': []}
+            if params['page'] > 2:
+                self.producer.fail_source('source_history_limit', 'service:redgifs', page_limit=2)
+            ids = {'new': ['newest', 'recent'], 'old': ['oldest', 'old'], 'best': ['middle', 'newest']}
+            return {'pages': 5, 'gifs': [{'id': ids[params['order']][params['page'] - 1]}]}
+        self.target.api._call = call
+        values = list(self.install())
+        self.assertEqual({v['id'] for v in values}, {'newest', 'recent', 'middle', 'old', 'oldest'})
+        self.assertEqual(redgifs_history.decode(self.producer.pages[-1]['cursor'])['phase'], 7)
 
     def test_empty_or_inconsistent_claimed_pages_do_not_establish_coverage(self):
         for value in ({'pages':1,'gifs':[]}, {'pages':0,'gifs':[{}]},

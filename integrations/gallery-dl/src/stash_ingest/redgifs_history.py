@@ -1,11 +1,12 @@
-"""Finish Redgifs history only when the checked feeds cover its reported range.
+"""Finish Redgifs history after exhausting the supported account listing views.
 
 The ordinary listing is tried first. A confirmed page ceiling opens separate
 image/video feeds, each from both ends when needed. Cursor state carries the
-remaining traversal and any inaccessible middle range across worker restarts.
-An inaccessible middle range remains unresolved: a page ceiling alone does not
-prove that no other supported listing can expose it. Rate limits, missing
-accounts and inconsistent responses likewise never establish completion.
+remaining traversal across worker restarts. If newest/oldest leave a middle
+range, also exhaust the popularity view for that media type. A confirmed ceiling
+then completes this one-time available-history sweep, retaining its limitation
+without scheduling old history again. Rate limits, missing accounts and
+inconsistent responses never establish exhaustion.
 """
 
 import json
@@ -15,7 +16,8 @@ from .client import Unavailable
 from .encoding import InvalidData, encode as encode_request
 from .runs import SourceFailure
 
-PREFIX = 'redgifs-history-v1:'
+PREFIX = 'redgifs-history-v2:'
+LEGACY_PREFIX = 'redgifs-history-v1:'
 FIELDS = {'phase', 'page', 'limit', 'images', 'videos'}
 
 
@@ -61,13 +63,15 @@ def scan_mode(client, run):
 def decode(cursor):
     if cursor.isascii() and cursor.isdecimal() and 1 <= int(cursor) <= 1000000:
         return dict(phase=0, page=int(cursor), limit=0, images=0, videos=0)
+    prefix = LEGACY_PREFIX if cursor.startswith(LEGACY_PREFIX) else PREFIX
     try:
-        value = json.loads(cursor[len(PREFIX):]) if cursor.startswith(PREFIX) else None
+        value = json.loads(cursor[len(prefix):]) if cursor.startswith(prefix) else None
     except ValueError:
         value = None
     if (not isinstance(value, dict) or set(value) != FIELDS
             or any(type(v) is not int for v in value.values())
-            or not 0 <= value['phase'] <= 5 or not 1 <= value['page'] <= 1000000
+            or not 0 <= value['phase'] <= (5 if prefix == LEGACY_PREFIX else 7)
+            or not 1 <= value['page'] <= 1000000
             or not 0 <= value['limit'] <= 1000000
             or not 0 <= value['images'] <= 1000000 or not 0 <= value['videos'] <= 1000000
             or (value['phase'] and not value['limit'])):
@@ -90,11 +94,17 @@ def install(target, producer, resume):
 
     def gifs():
         nonlocal original_cursor
-        while state['phase'] <= 4:
+        while state['phase'] <= 6:
             phase, page = state['phase'], state['page']
             producer.redgifs_history_expanding = phase != 0
-            key = 'images' if phase in (1, 2) else 'videos'
+            key = 'images' if phase in (1, 2, 5) else 'videos'
             reverse = phase in (2, 4)
+            popularity = phase in (5, 6)
+            # Newest and oldest already cover small feeds. Popularity is a
+            # final bounded route only for types with an uncovered middle.
+            if popularity and state[key] <= state['limit'] * 2:
+                state.update(phase=phase + 1, page=1)
+                continue
             # The opposite end needs only the pages absent from the newest end.
             if reverse and page > min(state['limit'], max(0, state[key] - state['limit'])):
                 state.update(phase=phase + 1, page=1)
@@ -102,9 +112,10 @@ def install(target, producer, resume):
             cursor = original_cursor or encode(state)
             producer.begin_page({'extractor': 'redgifs:user', 'url': target.url, 'cursor': cursor, 'item': ''})
             original_cursor = None
-            params = {'page': page, 'count': target.per_page, 'order': 'old' if reverse else 'new'}
+            params = {'page': page, 'count': target.per_page,
+                      'order': 'best' if popularity else 'old' if reverse else 'new'}
             if phase:
-                params['type'] = 'i' if phase < 3 else 'g'
+                params['type'] = 'i' if key == 'images' else 'g'
             try:
                 data = target.api._call(endpoint, params)
             except SourceFailure as exc:
@@ -138,12 +149,12 @@ def install(target, producer, resume):
                 if phase == 0:
                     return
                 state.update(phase=phase + 1, page=1)
-            elif phase and page >= state['limit']:
+            elif phase and not popularity and page >= state['limit']:
                 state.update(phase=phase + 1, page=1)
             else:
                 state['page'] += 1
-        # Keep the checked range in the existing checkpoint. A replay of an
-        # unresolved middle remains unresolved, even after a worker restart.
+        # Persist that every necessary view finished. A lost finish response
+        # replays this checkpoint without repeating the historical sweep.
         producer.begin_page({'extractor': 'redgifs:user', 'url': target.url,
                              'cursor': original_cursor or encode(state), 'item': ''})
         producer.redgifs_history_coverage = {
@@ -151,7 +162,5 @@ def install(target, producer, resume):
             'image_pages': state['images'], 'video_pages': state['videos'],
             'limited_types': [key for key in ('images', 'videos') if state[key] > state['limit'] * 2],
         }
-        if producer.redgifs_history_coverage['limited_types']:
-            producer.fail_source('source_history_limit', 'service:redgifs', page_limit=state['limit'])
 
     target.gifs = gifs
