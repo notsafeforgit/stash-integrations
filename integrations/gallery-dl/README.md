@@ -168,6 +168,28 @@ changing other extractor categories. The two projects use different HTTP stacks,
 so Chrome presets are equivalent browser profiles rather than identical TLS
 configurations. Retained work needs the usual reviewed configuration upgrade.
 
+For accounts where browser search works but Reddit's JSON search is blocked,
+native download jobs can opt into `extractor.reddit.native-search-api: "browser"`
+with `extractor.reddit.api: "rest"`. This reads the classic search HTML through
+the existing gallery-dl cookie session at `old.reddit.com`, then retrieves each
+result's full post JSON through gallery-dl's individual-post API. Titles, details,
+dates, galleries and linked media retain their normal extraction behavior. This
+is a native worker adapter; stock gallery-dl does not recognize this option.
+
+Only search listings change. Search terms, sort/time restrictions, subreddit
+scope, date/ID filters and `after` checkpoints are preserved. Full post lookups
+are lazy, so each post can finish and checkpoint before the next request. The
+normal source budget, rate-limit handling and browser cookies still apply; this
+does not bypass challenges or promise access to unavailable results. A blocked,
+unrecognized or incomplete page, changed continuation scope, or unavailable
+post metadata leaves the crawl unfinished. No result-page HTML is retained.
+
+The default remains `"api"`. Enabling this setting changes the reviewed profile
+policy: upgrade retained requests explicitly while preserving their windows,
+checkpoints, producer identities, outboxes and download archives. REST search
+and browser search use the same `t3_...` continuation token, without a new cursor
+format. No completed requests need to be reopened.
+
 The Twitter adapter also preserves `reply_user_id` from the raw API response,
 alongside the extractor's `conversation_id` and `reply_id`. Native capture intake
 uses these exact numeric account and post IDs for navigable threads and shared

@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "4029fe9ccdf2dba580ab6c7d0c03fabdafff5af5424902c423415cc559afd870",
-  "decision": "contract-change",
-  "reason": "Execution v9 expands the available-history policy for successful Redgifs pages whose positive counts contain no visible items. A versioned sparse checkpoint visits every advertised page of each image/video newest, oldest and popularity view before completing. Legacy v1/v2 checkpoints retain their current page; rate limits and malformed responses still block completion. Deploy with explicit v8-to-v9 upgrades preserving all pending windows, captures and download archives; completed history is not reopened."
+  "implementation_sha256": "ced047dadea6cf265c2217a2a3644d29900d7b98be704ff13fbec6068a9e25d8",
+  "decision": "compatible",
+  "reason": "Adds an explicitly selected browser-search transport while preserving the existing API default, full post capture, gallery extraction, date/ID filtering and t3 after/item checkpoint semantics. The new profile option changes its policy hash and requires an explicit retained-policy upgrade with original windows, admissions, cursors, archives and producer UUIDs preserved. HTML parsing fails closed on blocks, unknown layouts, changed query scope and post lookup failures; all requests retain the existing budget/backoff. No existing admitted configuration changes meaning and completed history is not reopened."
 }

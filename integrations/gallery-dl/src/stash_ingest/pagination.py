@@ -117,6 +117,8 @@ def install(target, producer):
             nonlocal installed
             if not installed:
                 installed = True
+                from . import reddit_search
+                reddit_search.install(target)
                 original_call = target.api._call
                 first = True
 

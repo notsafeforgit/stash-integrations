@@ -92,6 +92,19 @@ class ConfigurationTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(InvalidData):
                 Configuration(self.path)
 
+    def test_browser_search_is_an_explicit_profile_policy_change(self):
+        self.value['source_category'] = 'reddit'
+        self.value['gallery']['extractor']['reddit'] = {'api': 'rest'}
+        self.write()
+        original = Configuration(self.path)
+        self.value['gallery']['extractor']['reddit']['native-search-api'] = 'browser'
+        self.write()
+        changed = Configuration(self.path)
+        self.assertNotEqual(original.policy_sha256, changed.policy_sha256)
+        self.assertEqual(original.compatibility, changed.compatibility)
+        self.assertEqual(original.root_uuid, changed.root_uuid)
+        self.assertEqual(original._gallery['extractor']['archive'], changed._gallery['extractor']['archive'])
+
     def test_explicit_source_adapter_is_validated_and_bound_to_policy(self):
         original = Configuration(self.path)
         self.assertEqual(original.source_adapter, 'gallery-dl')
