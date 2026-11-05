@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -110,9 +111,8 @@ class RedgifsHistoryTests(unittest.TestCase):
         self.assertEqual(self.producer.redgifs_history_coverage['limited_types'], ['videos'])
 
     def test_legacy_terminal_checkpoint_runs_popularity_before_completing(self):
-        resume = {'extractor': 'redgifs:user', 'url': URL, 'cursor': redgifs_history.encode(
-            dict(phase=5, page=1, limit=2, images=2, videos=5)).replace(
-                redgifs_history.PREFIX, redgifs_history.LEGACY_PREFIX), 'item': ''}
+        resume = {'extractor': 'redgifs:user', 'url': URL, 'cursor': redgifs_history.LEGACY_PREFIX + json.dumps(
+            dict(phase=5, page=1, limit=2, images=2, videos=5)), 'item': ''}
         list(self.install(resume))
         self.assertEqual([(r['type'], r['order'], r['page']) for r in self.calls],
                          [('g', 'best', 1), ('g', 'best', 2), ('g', 'best', 3)])
@@ -196,6 +196,67 @@ class RedgifsHistoryTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.target.api._call = lambda *_: value
                 self.assertEqual(list(self.install()), [])
+
+    def test_sparse_reported_items_require_all_media_types_and_orderings(self):
+        def call(_, params):
+            self.calls.append(dict(params))
+            return {'page': params['page'], 'pages': 1, 'total': 2, 'gifs': []}
+        self.target.api._call = call
+        self.assertEqual(list(self.install()), [])
+        self.assertEqual([(p.get('type'), p['order']) for p in self.calls],
+                         [(None, 'new'), ('i', 'new'), ('i', 'old'), ('g', 'new'),
+                          ('g', 'old'), ('i', 'best'), ('g', 'best')])
+        self.assertTrue(self.producer.redgifs_history_coverage['sparse_listings'])
+        self.assertEqual(self.producer.redgifs_history_coverage['page_limit'], 0)
+
+    def test_sparse_middle_page_does_not_hide_later_posts(self):
+        self.target.per_page = 1
+        def call(_, params):
+            self.calls.append(dict(params))
+            page = params['page']
+            return {'page': page, 'pages': 3, 'total': 3,
+                    'gifs': [] if page == 2 else [{'id': (params.get('type', ''), params['order'], page)}]}
+        self.target.api._call = call
+        values = list(self.install())
+        self.assertEqual(len(self.calls), 21)
+        self.assertEqual(len(values), 14)
+        self.assertTrue(any(v['id'] == ('g', 'best', 3) for v in values))
+
+    def test_sparse_filter_revisits_previously_skipped_views_once(self):
+        original = self.call
+        def call(endpoint, params):
+            value = original(endpoint, params)
+            if params.get('type') == 'g' and params['order'] == 'new' and params['page'] == 1:
+                value.update(total=401, gifs=[])
+            return value
+        self.target.api._call = call
+        list(self.install())
+        self.assertTrue(any(p.get('type') == 'i' and p['order'] == 'old' for p in self.calls))
+        self.assertTrue(any(p.get('type') == 'i' and p['order'] == 'best' for p in self.calls))
+        self.assertTrue(self.producer.redgifs_history_coverage['sparse_listings'])
+
+    def test_sparse_checkpoint_survives_rate_limit_without_claiming_completion(self):
+        def call(_, params):
+            if params.get('type') == 'g' and params['order'] == 'best':
+                self.producer.fail_source('rate_limited', 'service:redgifs')
+            return {'pages': 1, 'total': 1, 'gifs': []}
+        self.target.api._call = call
+        with self.assertRaises(SourceFailure):
+            list(self.install())
+        resume = self.producer.pages[-1]
+        self.assertEqual(redgifs_history.decode(resume['cursor'])['sparse'], 1)
+        self.assertFalse(hasattr(self.producer, 'redgifs_history_coverage'))
+        self.producer = Producer()
+        self.target.api._call = lambda *_: {'pages': 1, 'total': 1, 'gifs': []}
+        self.assertEqual(list(self.install(resume)), [])
+        self.assertTrue(self.producer.redgifs_history_coverage['sparse_listings'])
+
+    def test_previous_v2_checkpoint_preserves_its_current_page(self):
+        cursor = redgifs_history.PREVIOUS_PREFIX + json.dumps(dict(phase=3, page=2, limit=2, images=2, videos=5))
+        resume = {'extractor': 'redgifs:user', 'url': URL, 'cursor': cursor, 'item': ''}
+        list(self.install(resume))
+        self.assertEqual(self.producer.pages[0], resume)
+        self.assertEqual((self.calls[0]['type'], self.calls[0]['page']), ('g', 2))
 
     def test_transient_and_account_failures_remain_failures(self):
         for code in ('rate_limited', 'timeout', 'account_deleted', 'account_not_found'):

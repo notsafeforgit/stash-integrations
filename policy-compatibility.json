@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v8",
-  "implementation_sha256": "c26be963481f0364223d453d788a2c79446abbfef7d1706192b6e2533a8acc32",
-  "decision": "compatible",
-  "reason": "Fairly rotate due backfill calls, observe terminal bodyless discovery executions, and let wholly terminal cancelled callers accept authoritative completed account history while preserving original requests, guards and outcomes. Pending source work and uncertain completion deliveries remain protected. Add an optional bounded dedupe discovery deadline without changing media scope or native byte/ownership verification. No source command, capture, coverage or cursor semantics change."
+  "execution_contract": "stash-worker-execution-v9",
+  "implementation_sha256": "4029fe9ccdf2dba580ab6c7d0c03fabdafff5af5424902c423415cc559afd870",
+  "decision": "contract-change",
+  "reason": "Execution v9 expands the available-history policy for successful Redgifs pages whose positive counts contain no visible items. A versioned sparse checkpoint visits every advertised page of each image/video newest, oldest and popularity view before completing. Legacy v1/v2 checkpoints retain their current page; rate limits and malformed responses still block completion. Deploy with explicit v8-to-v9 upgrades preserving all pending windows, captures and download archives; completed history is not reopened."
 }

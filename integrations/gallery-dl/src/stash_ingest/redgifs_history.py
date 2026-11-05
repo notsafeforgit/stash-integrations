@@ -5,8 +5,9 @@ image/video feeds, each from both ends when needed. Cursor state carries the
 remaining traversal across worker restarts. If newest/oldest leave a middle
 range, also exhaust the popularity view for that media type. A confirmed ceiling
 then completes this one-time available-history sweep, retaining its limitation
-without scheduling old history again. Rate limits, missing accounts and
-inconsistent responses never establish exhaustion.
+without scheduling old history again. Empty pages with nonzero counts trigger
+all filtered views; they do not by themselves establish exhaustion. Rate limits,
+missing accounts and malformed responses never establish exhaustion.
 """
 
 import json
@@ -16,7 +17,8 @@ from .client import Unavailable
 from .encoding import InvalidData, encode as encode_request
 from .runs import SourceFailure
 
-PREFIX = 'redgifs-history-v2:'
+PREFIX = 'redgifs-history-v3:'
+PREVIOUS_PREFIX = 'redgifs-history-v2:'
 LEGACY_PREFIX = 'redgifs-history-v1:'
 FIELDS = {'phase', 'page', 'limit', 'images', 'videos'}
 
@@ -62,25 +64,28 @@ def scan_mode(client, run):
 
 def decode(cursor):
     if cursor.isascii() and cursor.isdecimal() and 1 <= int(cursor) <= 1000000:
-        return dict(phase=0, page=int(cursor), limit=0, images=0, videos=0)
-    prefix = LEGACY_PREFIX if cursor.startswith(LEGACY_PREFIX) else PREFIX
+        return dict(phase=0, page=int(cursor), limit=0, images=0, videos=0, sparse=0)
+    prefix = next((p for p in (LEGACY_PREFIX, PREVIOUS_PREFIX, PREFIX) if cursor.startswith(p)), PREFIX)
     try:
         value = json.loads(cursor[len(prefix):]) if cursor.startswith(prefix) else None
     except ValueError:
         value = None
-    if (not isinstance(value, dict) or set(value) != FIELDS
+    fields = FIELDS | {'sparse'} if prefix == PREFIX else FIELDS
+    if (not isinstance(value, dict) or set(value) != fields
             or any(type(v) is not int for v in value.values())
             or not 0 <= value['phase'] <= (5 if prefix == LEGACY_PREFIX else 7)
             or not 1 <= value['page'] <= 1000000
             or not 0 <= value['limit'] <= 1000000
             or not 0 <= value['images'] <= 1000000 or not 0 <= value['videos'] <= 1000000
-            or (value['phase'] and not value['limit'])):
+            or value.get('sparse', 0) not in (0, 1)
+            or (value['phase'] and not value['limit'] and not value.get('sparse'))):
         raise InvalidData('Invalid Redgifs history checkpoint')
+    value.setdefault('sparse', 0)
     return value
 
 
 def encode(value):
-    return PREFIX + json.dumps(value, sort_keys=True, separators=(',', ':'))
+    return PREFIX + json.dumps({'sparse': 0, **value}, sort_keys=True, separators=(',', ':'))
 
 
 def install(target, producer, resume):
@@ -88,7 +93,7 @@ def install(target, producer, resume):
     # A filtered/popular feed cannot be silently reinterpreted as full history.
     if parsed.query or parsed.fragment or producer.replay_archive:
         raise InvalidData('Available Redgifs history requires an unfiltered profile without recovery replay')
-    state = decode(resume['cursor']) if resume else dict(phase=0, page=1, limit=0, images=0, videos=0)
+    state = decode(resume['cursor']) if resume else dict(phase=0, page=1, limit=0, images=0, videos=0, sparse=0)
     original_cursor = resume['cursor'] if resume else None
     endpoint = '/v2/users/' + target.key.lower() + '/search'
 
@@ -102,11 +107,11 @@ def install(target, producer, resume):
             popularity = phase in (5, 6)
             # Newest and oldest already cover small feeds. Popularity is a
             # final bounded route only for types with an uncovered middle.
-            if popularity and state[key] <= state['limit'] * 2:
+            if popularity and not state['sparse'] and state[key] <= state['limit'] * 2:
                 state.update(phase=phase + 1, page=1)
                 continue
             # The opposite end needs only the pages absent from the newest end.
-            if reverse and page > min(state['limit'], max(0, state[key] - state['limit'])):
+            if reverse and not state['sparse'] and page > min(state['limit'], max(0, state[key] - state['limit'])):
                 state.update(phase=phase + 1, page=1)
                 continue
             cursor = original_cursor or encode(state)
@@ -138,18 +143,31 @@ def install(target, producer, resume):
             empty_account = page == 1 and type(data.get('total')) is int and data['total'] == 0
             if (('total' in data and (type(data['total']) is not int or data['total'] < 0))
                     or (data['pages'] == 0 and (data['gifs'] or data.get('total', 0)))
-                    or (page <= data['pages'] and not data['gifs'] and not empty_account)
                     or len(data['gifs']) > target.per_page
                     or ('page' in data and (type(data['page']) is not int or data['page'] != page))):
                 raise InvalidData('Inconsistent Redgifs history listing cannot establish coverage')
+            if page <= data['pages'] and not data['gifs'] and not empty_account:
+                if type(data.get('total')) is not int or data['total'] <= 0:
+                    raise InvalidData('Empty Redgifs history page lacks a reported item count')
+                # A successful but sparse page can reflect unavailable items
+                # still counted by the provider. Read the remaining advertised
+                # pages and every ordering of both media types before finishing.
+                # Keep this fact in the checkpoint across budget yields/restarts.
+                first_sparse = not state['sparse']
+                state['sparse'] = 1
+                if first_sparse and phase:
+                    # Earlier filters may have skipped overlapping old/best
+                    # views. Restart the finite filtered sweep exactly once.
+                    state.update(phase=1, page=1)
+                    continue
             if phase:
                 state[key] = max(state[key], data['pages'])
             yield from data['gifs']
             if page >= data['pages']:
-                if phase == 0:
+                if phase == 0 and not state['sparse']:
                     return
                 state.update(phase=phase + 1, page=1)
-            elif phase and not popularity and page >= state['limit']:
+            elif phase and not popularity and state['limit'] and page >= state['limit']:
                 state.update(phase=phase + 1, page=1)
             else:
                 state['page'] += 1
@@ -160,7 +178,9 @@ def install(target, producer, resume):
         producer.redgifs_history_coverage = {
             'policy': 'available', 'page_limit': state['limit'],
             'image_pages': state['images'], 'video_pages': state['videos'],
-            'limited_types': [key for key in ('images', 'videos') if state[key] > state['limit'] * 2],
+            'limited_types': [key for key in ('images', 'videos') if state['limit'] and state[key] > state['limit'] * 2],
         }
+        if state['sparse']:
+            producer.redgifs_history_coverage['sparse_listings'] = True
 
     target.gifs = gifs
