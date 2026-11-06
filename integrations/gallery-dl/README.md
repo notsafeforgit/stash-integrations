@@ -168,6 +168,26 @@ changing other extractor categories. The two projects use different HTTP stacks,
 so Chrome presets are equivalent browser profiles rather than identical TLS
 configurations. Retained work needs the usual reviewed configuration upgrade.
 
+Native jobs can keep `extractor.reddit.api: "rest"` and select
+`extractor.reddit.native-api-fallback: "oauth"`. This opt-in mode requires the
+configured Reddit client ID and refresh token. It tries cookie-authenticated
+JSON first. Only an HTTP 403 containing Reddit's recognized network-security
+page retries the same public JSON request through gallery-dl's OAuth API.
+Search, individual posts, profile details and public listings are tracked
+separately within the extractor: a blocked search does not move working post
+lookups to OAuth. A route tries REST again after five minutes, and a new crawl
+starts with REST. There is no additional persistent history or fallback database.
+
+Both attempts preserve the query, sort, time range and `after` cursor and pass
+through the native request budget. A recovered REST transport rejection remains
+a recorded HTTP 403 error with a redacted `oauth_fallback` diagnostic; it is not
+classified as exhausted service-wide quota. Every `Retry-After` hint is retained.
+HTTP 429, authentication failures, private/missing accounts, timeouts, unknown
+responses and unrecognized/private feed routes keep their ordinary handling.
+OAuth failures cannot become empty successful pages or trigger a mode-switching
+loop. Metadata-only post enrichment supports the same option. Existing profiles
+default to no fallback; enabling it requires a reviewed policy upgrade.
+
 For accounts where browser search works but Reddit's JSON search is blocked,
 native download jobs can opt into `extractor.reddit.native-search-api: "browser"`
 with `extractor.reddit.api: "rest"`. This reads the classic search HTML through

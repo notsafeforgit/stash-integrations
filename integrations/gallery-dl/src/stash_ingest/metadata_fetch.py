@@ -20,7 +20,8 @@ from .metadata_bundle import Bundle, ERRORS, MAX_BYTES, MAX_RECORDS, MAX_REFEREN
 NETWORK_KEYS = frozenset({"username", "password", "cookies", "cookies-domain", "cookies-select",
                           "cookies-from-browser", "client-id", "client-secret", "refresh-token", "access-token",
                           "user-agent", "browser", "headers", "proxy", "source-address", "verify",
-                          "sleep-request", "sleep-extractor", "api", "endpoint", "api-key", "token"})
+                          "sleep-request", "sleep-extractor", "api", "endpoint", "api-key", "token",
+                          "user-agent-oauth", "native-api-fallback"})
 POSTS = {"reddit": {"submission"}, "twitter": {"tweet"}, "bluesky": {"post"},
          "tiktok": {"post"}, "instagram": {"post", "reel"}, "kemono": {"post"},
          "coomer": {"post"}, "patreon": {"post"}, "fansly": {"post"}}
@@ -183,7 +184,10 @@ def collect(url, settings, resume=None, *, factory=None, check=lambda: None, res
         pause = util.build_duration_func(target.config("sleep-extractor"))
         if pause is not None:
             target.sleep(pause(), "extractor")
-        if target.category == "twitter":
+        if target.category == 'reddit':
+            from . import reddit_api
+            reddit_api.install(target)
+        elif target.category == "twitter":
             twitter_evidence(target)
         elif target.category == "imgur":
             from . import reddit_imgur
@@ -469,8 +473,10 @@ def main(collector=None):
             host = urlsplit(request.url).hostname or ""
             scope = "service:reddit" if host == "reddit.com" or host.endswith(".reddit.com") else ""
             if response.status_code == 429 or network_security(response, scope):
-                response.close()
-                raise RateLimited()
+                from .reddit_api import can_fallback
+                if not can_fallback(response, request.url):
+                    response.close()
+                    raise RateLimited()
             return response
 
         requests.sessions.Session.send = guarded

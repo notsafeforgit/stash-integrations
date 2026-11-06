@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from . import metadata_fetch
+from . import metadata_fetch, reddit_api
 from .encoding import InvalidData, decode, encode
 from .metadata_bundle import Bundle, ERRORS as METADATA_ERRORS, MAX_BYTES, _native_size, public_url
 from .retention import POLICY
@@ -154,6 +154,7 @@ def collect(url, settings, cursor=None, *, factory=None, check=lambda: None, res
             original_submissions = target.submissions
 
             def submissions():
+                reddit_api.install_api(target)
                 original_call, seen = target.api._call, False
 
                 def call(endpoint, params=None, *args, **kwargs):

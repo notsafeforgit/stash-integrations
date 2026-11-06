@@ -96,8 +96,10 @@ class SourceSession:
                             self.producer.fail_source('source_history_limit', scope, page_limit=int(match[1]))
         from .request_budget import network_security
         if response.status_code == 429 or network_security(response, scope):
-            response.close()
-            self.producer.fail_source("rate_limited", scope)
+            from .reddit_api import can_fallback
+            if not can_fallback(response, url):
+                response.close()
+                self.producer.fail_source("rate_limited", scope)
         return response
 
 

@@ -69,14 +69,22 @@ def response_result(permit, response):
     result = {'request_uuid': permit['request_uuid'],
               'status': 0 if response is None else response.status_code,
               'retry_after_seconds': 0 if response is None else retry_after(response)}
-    if response is not None and network_security(response, permit['source_scope']):
+    blocked = response is not None and network_security(response, permit['source_scope'])
+    from .reddit_api import can_fallback
+    fallback = blocked and can_fallback(response)
+    if blocked and not fallback:
         result['block_reason'] = 'network_security'
-    if result['status'] == 429 or result.get('block_reason'):
+    if result['status'] == 429 or blocked:
         # Persist the distinction in worker logs without website URLs, cookies,
         # response bodies or account data. Aggregate pacing counters combine it.
+        # The opt-in adapter can recover an HTTP 403 transport restriction via
+        # authenticated OAuth. Record that real 403 and every Retry-After hint,
+        # without misclassifying it as a service-wide quota exhaustion. OAuth
+        # failures and all actual 429s still enter the ordinary shared backoff.
         print(json.dumps({'event': 'source_request_blocked', 'request_uuid': permit['request_uuid'],
                           'scope': permit['source_scope'], 'http_status': result['status'],
-                          'block_reason': result.get('block_reason', 'http_429'),
+                          'block_reason': 'network_security' if blocked else 'http_429',
+                          **({'recovery': 'oauth_fallback'} if fallback else {}),
                           'retry_after_seconds': result['retry_after_seconds']}, sort_keys=True), file=sys.stderr)
     return result
 
