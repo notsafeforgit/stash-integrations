@@ -2,13 +2,17 @@
 
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from gallery_dl import archive as gdl_archive
+from gallery_dl import archive as gdl_archive, config, extractor
+from gallery_dl.extractor import reddit
+from gallery_dl.extractor.common import Message
 from stash_ingest import post_archive
+from stash_ingest.gallery import NativeDownloadJob
 from stash_ingest.outbox import Outbox
 from helpers import PRODUCER
 
@@ -76,3 +80,58 @@ class PostArchiveTests(unittest.TestCase):
         post_archive.prune_old_cache(self.box)
         for table in ('missing_media', 'deleted_media'):
             self.assertEqual(self.box.db.execute('SELECT count(*) FROM ' + table).fetchone()[0], 0)
+
+    def test_recursive_post_lookup_honors_durable_completion(self):
+        archive = self.archive()
+        post_archive.record(archive, 'reviewedgallery')
+        fetch = Mock(return_value=({'id': 'available'}, ()))
+        target = SimpleNamespace(api=SimpleNamespace(submission=fetch), submissions=lambda: ())
+        post_archive.install_recursive_lookup(target, lambda: archive)
+        target.submissions()
+        self.assertFalse(target.api.submission('reviewedgallery')[0]['_media'])
+        fetch.assert_not_called()
+        self.assertEqual(target.api.submission('available'), ({'id': 'available'}, ()))
+        fetch.assert_called_once_with('available')
+        target.submissions()
+        self.assertEqual(target.api.submission('reviewedgallery')[0]['_media'], False)
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_recursive_lookup_before_archive_initialization_fetches_normally(self):
+        fetch = Mock(return_value=({'id': 'initial'}, ()))
+        target = SimpleNamespace(api=SimpleNamespace(submission=fetch), submissions=lambda: ())
+        post_archive.install_recursive_lookup(target, lambda: None)
+        target.submissions()
+        self.assertEqual(target.api.submission('initial'), ({'id': 'initial'}, ()))
+        fetch.assert_called_once_with('initial')
+
+    def test_upstream_crosspost_recursion_skips_archived_original_and_continues(self):
+        archive = self.archive()
+        post_archive.record(archive, 'abc123')
+        for parent_directory in (False, True):
+            with self.subTest(parent_directory=parent_directory):
+                config.clear()
+                self.addCleanup(config.clear)
+                config.set(('extractor', 'reddit'), 'recursion', 1)
+                config.set(('extractor', 'reddit'), 'parent-directory', parent_directory)
+                target = extractor.find('https://www.reddit.com/user/fixture/')
+                base = {'created_utc': 1700000000, 'is_video': False, 'is_self': False}
+                target.submissions = lambda: iter([
+                    (dict(base, id='crosspost', url='https://www.reddit.com/gallery/abc123'), ()),
+                    (dict(base, id='nextpost', url='https://www.reddit.com/gallery/def456'), ()),
+                ])
+                fetch = Mock(return_value=(dict(base, id='def456', url='https://i.redd.it/available.jpg'), ()))
+                api = SimpleNamespace(comments=False, submission=fetch)
+                current = [None]
+                post_archive.install_recursive_lookup(target, lambda: current[0])
+                with patch.object(reddit, 'RedditAPI', return_value=api):
+                    messages = []
+                    for message in target.items():
+                        current[0] = archive
+                        messages.append(message)
+                fetch.assert_called_once_with('def456')
+                media = [message[1] for message in messages if message[0] == Message.Url]
+                self.assertEqual(media, ['https://i.redd.it/available.jpg'])
+                skipped = [message[2] for message in messages if message[2].get('_native_archive_complete')]
+                self.assertEqual(len(skipped), int(parent_directory))
+                for directory in skipped:
+                    NativeDownloadJob.handle_directory.__wrapped__(object.__new__(NativeDownloadJob), directory)

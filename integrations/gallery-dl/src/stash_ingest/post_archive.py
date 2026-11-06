@@ -34,6 +34,34 @@ def record(archive, identity):
         raise InvalidData('Completed post archive write was not durable')
 
 
+def install_recursive_lookup(target, current_archive):
+    """Respect completed posts when Reddit follows a crosspost's original."""
+    original = getattr(target, 'submissions', None)
+    if original is None:
+        return
+
+    def submissions():
+        api = target.api
+        if not getattr(api, '_native_completed_posts', False):
+            api._native_completed_posts = True
+            fetch = api.submission
+
+            def submission(identity):
+                if contains(current_archive(), identity):
+                    # gallery-dl consumes this internal no-media result without
+                    # making a request or reporting a successful media fetch.
+                    skipped = {'id': identity, '_media': False, '_native_archive_complete': True}
+                    # With parent-directory enabled, upstream emits the first
+                    # comment as a directory even for an empty-media result.
+                    return skipped, (skipped,)
+                return fetch(identity)
+
+            api.submission = submission
+        return original()
+
+    target.submissions = submissions
+
+
 def forget(box, entries):
     with box.transaction():
         for service, item in entries:

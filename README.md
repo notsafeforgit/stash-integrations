@@ -112,6 +112,10 @@ original archive locally from retained source context, without contacting Reddit
 Retry-only state is retired after completion, and old missing-media caches expire.
 Partial albums cannot become complete while an attachment is unresolved.
 
+Release v0.6.42 also honors these completion entries when Reddit crossposts
+recursively request the original post. Reviewed inaccessible galleries can be
+finished in the configured archive and subsequent posts continue processing.
+
 Deploy native schema 1000137 / attachment retry protocol 2 and all shared-outbox
 clients and backup readers together, then explicitly upgrade reviewed v1/v2 queue
 policies to v3. Preserve producer UUIDs, archives, original requests, pending ranges,

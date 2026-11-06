@@ -425,6 +425,8 @@ class NativeDownloadJob(job.DownloadJob):
             from . import pagination
             pagination.install(self.extractor, self.producer)
             recent.install(self.extractor, self.producer)
+            if self.extractor.category == 'reddit':
+                post_archive.install_recursive_lookup(self.extractor, lambda: self.archive)
         elif self.extractor.category == 'redgifs' and self._native_parent is None:
             from . import pagination
             pagination.install(self.extractor, self.producer)
@@ -598,6 +600,8 @@ class NativeDownloadJob(job.DownloadJob):
 
     @publication_guard
     def handle_directory(self, kwdict):
+        if kwdict.get('_native_archive_complete'):
+            return
         self.producer.check()
         self._finish_post()
         if self.pathfmt is not None:
