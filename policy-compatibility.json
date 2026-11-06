@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "a9fded38c80cb8ebf11bde084e25a868d38559a6ea5a04505987ca422ede6fde",
+  "implementation_sha256": "b9ed29ab18f5715089a602eac09dbbfb891db9e911439c9cedd77c7cb090680c",
   "decision": "compatible",
-  "reason": "Compatible fixes accept bare Reddit CDN media IDs and explicitly empty Imgur albums without weakening nonempty membership validation. Existing queues retain their IDs, windows, cursors, archives, capture contract and REST/OAuth behavior. Adds opt-in earliest-fill-blanks-v1 dedupe with native full-byte verification, single-file owner merging, preserved manual clears, source links and galleries. Optional saved-metadata intake is bounded and durably journaled; missing evidence and retired content require review. Schema-1 dedupe requests retain file-only meaning after journal migration. Dedupe options do not alter admitted crawl policies."
+  "reason": "Compatible evidence repairs preserve admitted crawl windows, retrieval passes, archive identities and checkpoints. Linked Redgifs image galleries already expand upstream. Additional members now require verified API membership and retain their own original-host metadata while the directly linked member retains Reddit metadata. Reddit child-extractor download failures use the existing bounded missing-file recovery policy. Existing capture and execution contracts remain valid."
 }

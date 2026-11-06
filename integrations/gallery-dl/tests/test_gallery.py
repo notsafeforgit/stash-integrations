@@ -22,6 +22,7 @@ from gallery_dl.extractor.twitter import TwitterExtractor
 from gallery_dl.extractor.reddit import RedditExtractor
 from gallery_dl.extractor.redgifs import RedgifsAPI, RedgifsImageExtractor
 
+from stash_ingest import redgifs
 from stash_ingest.encoding import InvalidData, decode
 from stash_ingest.filesystem import Root
 from stash_ingest.gallery import NativeDownloadJob, twitter_collection_queue
@@ -407,6 +408,71 @@ class GalleryTests(unittest.TestCase):
             self.assertEqual(completed["source"], {"capture_event_uuid": capture["event_uuid"], "attachment": expected})
             self.assertEqual(completed["media_kind"], "image")
 
+    def test_linked_redgifs_gallery_preserves_each_members_source_metadata(self):
+        self.narrow_window()
+        config.set(('extractor', 'reddit'), 'parent-metadata', '_reddit')
+        post = reddit_data(id='gallerypost', url='https://i.redgifs.com/i/LinkedPicture.jpg',
+                           title='Reddit title', date='2026-10-01T00:00:00.200Z')
+        pictures = [{'id': identity, 'createDate': 1577836800, 'gallery': 'gallery-fixture',
+                     'description': 'Host description for ' + identity,
+                     'urls': {'hd': 'https://media.redgifs.com/' + identity + '-large.jpg'}}
+                    for identity in ('linkedpicture', 'secondpicture', 'thirdpicture')]
+        downloads = []
+
+        def download(child, url):
+            downloads.append(url)
+            child.pathfmt.part_enable()
+            with child.pathfmt.open('wb') as output:
+                output.write(b'gallery fixture ' + url.encode())
+            return True
+
+        with patch.object(RedgifsAPI, 'gif', side_effect=lambda *_: copy.deepcopy(pictures[0])), \
+                patch.object(RedgifsAPI, 'gallery', side_effect=lambda *_: {'gifs': copy.deepcopy(pictures)}), \
+                patch.object(NativeDownloadJob, 'download', download):
+            for _ in range(2):
+                self.assertEqual(self.task(post, fixture=LinkedRedgifsFixture).run(), 0)
+        self.assertEqual(downloads, [picture['urls']['hd'] for picture in pictures])
+        self.assertEqual(self.archive_count(), 3)
+        captures = self.events(kinds=('source.capture',))
+        self.assertEqual(len(captures), 6)
+        for group in (captures[:3], captures[3:]):
+            self.assertEqual(group[0]['post'], {'namespace': 'native:reddit', 'value': 'gallerypost'})
+            self.assertEqual(group[0]['metadata']['title'], 'Reddit title')
+            for capture, picture in zip(group[1:], pictures[1:]):
+                self.assertEqual(capture['post'], {'namespace': 'native:redgifs', 'value': picture['id']})
+                self.assertEqual(capture['metadata']['original_text'], picture['description'])
+                self.assertEqual(capture['metadata']['published_at'], '2020-01-01T00:00:00.000Z')
+                self.assertNotIn('_reddit', capture['source'])
+                self.assertNotIn('title', capture['metadata'])
+
+    def test_linked_gallery_rejects_unrelated_membership(self):
+        config.set(('extractor', 'reddit'), 'parent-metadata', '_reddit')
+        post = reddit_data(url='https://www.redgifs.com/watch/linkedpicture')
+        picture = {'id': 'linkedpicture', 'createDate': 1577836800, 'gallery': 'expected',
+                   'urls': {'hd': 'https://media.redgifs.com/LinkedPicture.jpg'}}
+        for members in ([], [dict(picture, gallery='other')], [picture, picture]):
+            with self.subTest(members=members), \
+                    patch.object(RedgifsAPI, 'gif', return_value=copy.deepcopy(picture)), \
+                    patch.object(RedgifsAPI, 'gallery', return_value={'gifs': copy.deepcopy(members)}):
+                self.assertNotEqual(self.task(post, fixture=LinkedRedgifsFixture).run(), 0)
+                self.assertEqual(self.producer.failure_code, 'source_rejected')
+
+    def test_linked_gallery_crosspost_uses_original_attachment_evidence(self):
+        original = reddit_data(id='original', url='https://i.redgifs.com/i/linkedpicture.jpg')
+        parent = reddit_data(id='crosspost', url='https://www.reddit.com/comments/original/',
+                             crosspost_parent='t3_original', crosspost_parent_list=[original])
+        extra = {'id': 'extra', 'gallery': 'gallery', 'description': 'Host caption',
+                 'urls': {'hd': 'https://media.redgifs.com/extra.jpg'}}
+        extractor = Mock(subcategory='image', _native_gallery_members=('gallery', 'linkedpicture', {'extra': extra}))
+        data = {**extra, '_reddit': parent, 'category': 'redgifs', '_url': extra['urls']['hd'],
+                'source_extractor_url': original['url']}
+        captured = redgifs.linked_gallery_source(extractor, data)
+        self.assertEqual(captured['description'], 'Host caption')
+        self.assertNotIn('_reddit', captured)
+        parent['crosspost_parent'] = 't3_different'
+        with self.assertRaisesRegex(InvalidData, 'crosspost identity'):
+            redgifs.linked_gallery_source(extractor, data)
+
     def test_download_and_existing_file_skip_keep_exact_capture_dependency(self):
         first = self.task()
         self.assertEqual(first.run(), 0)
@@ -517,6 +583,25 @@ class GalleryTests(unittest.TestCase):
         from stash_ingest.windows import normalize
         self.assertEqual(request['window'], normalize(self.lease.run['window']))
         self.assertEqual(request['collection_uuid'], self.lease.run['collection_uuid'])
+
+    def test_missing_linked_file_handoff_keeps_parent_crawl_moving(self):
+        from stash_ingest.run_queue import RunQueue
+        self.producer.attachment_retries = True
+        self.lease.run['policy_sha256'] = 'a' * 64
+        config.set(('extractor', 'reddit'), 'parent-metadata', '_reddit')
+        post = reddit_data(id='linkedpost', url='https://www.redgifs.com/watch/linkedclip')
+        clip = {'id': 'linkedclip', 'createDate': 1577836800, 'gallery': None,
+                'urls': {'hd': 'https://media.redgifs.com/LinkedClip.mp4'}}
+        with patch.object(RedgifsAPI, 'gif', return_value=clip), \
+                patch.object(NativeDownloadJob, 'download', return_value=False):
+            self.assertEqual(self.task(post, fixture=LinkedRedgifsFixture).run(), 0)
+        event = self.events(kinds=None)[-1]
+        self.assertEqual(event['state'], 'failed')
+        request = decode(RunQueue(self.box).claim(self.lease.owner).body)
+        self.assertEqual(request['attachment_retry_event_uuid'], event['event_uuid'])
+        self.assertEqual(request['retrieval_url'], 'https://www.reddit.com/comments/linkedpost/')
+        self.assertEqual(self.archive_count(), 0)
+        self.assertFalse(self.producer.unhandled_download_failure)
 
     def test_finished_post_uses_archive_without_repeating_download_or_receipts(self):
         self.producer.attachment_retries = True

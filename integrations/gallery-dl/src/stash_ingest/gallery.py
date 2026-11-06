@@ -748,6 +748,7 @@ class NativeDownloadJob(job.DownloadJob):
         pathfmt.kwdict.pop("_meta_path", None)
         filename.install(self).begin(pathfmt.kwdict)
         kept = dict(pathfmt.kwdict, _url=self._native_url, source_extractor_url=source_url(self.extractor))
+        kept = redgifs.linked_gallery_source(self.extractor, kept)
         # Preserve the actual Reddit destination for a separately scheduled
         # Redgifs profile. This also runs for archive skips, before any download.
         # Never take a directory hint from website data or user keywords.
@@ -801,8 +802,7 @@ class NativeDownloadJob(job.DownloadJob):
         if self._native_prepared is None:
             raise InvalidData("Failed download has no durable source capture")
         event = self.producer.report_download(self._native_prepared, "failed", reason_code="download_failed")
-        delegated = (self._native_parent is None and self.extractor.category == 'reddit'
-                     and self.producer.retry_missing_file(self._native_prepared, event))
+        delegated = self.producer.retry_missing_file(self._native_prepared, event)
         if delegated:
             self._native_delegated_failures = getattr(self, '_native_delegated_failures', 0) + 1
             self.producer.checkpoint(self._native_cursor, self._native_replay, False)

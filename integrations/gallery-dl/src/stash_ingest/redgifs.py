@@ -1,5 +1,6 @@
 """Native Redgifs items, independent of Reddit posts that embed the same media."""
 
+import copy
 from datetime import datetime, timezone
 import re
 
@@ -36,7 +37,71 @@ def publication(data):
     return datetime.fromtimestamp(value, timezone.utc)
 
 
+def install_gallery(extractor):
+    from gallery_dl.extractor.redgifs import RedgifsImageExtractor
+    if not isinstance(extractor, RedgifsImageExtractor) or hasattr(extractor, '_native_gallery_members'):
+        return
+    extractor._native_gallery_members = None
+    original_gif, original_gallery = extractor.api.gif, extractor.api.gallery
+    seed = None
+
+    def gif(identity):
+        nonlocal seed
+        result = original_gif(identity)
+        seed = copy.deepcopy(result)
+        return result
+
+    def gallery(identity):
+        result = original_gallery(identity)
+        members = result.get('gifs')
+        if not isinstance(seed, dict) or seed.get('gallery') != identity or not isinstance(members, list):
+            raise InvalidData('Redgifs gallery has no matching requested item')
+        items = {}
+        for item in members:
+            if not isinstance(item, dict) or item.get('gallery') != identity:
+                raise InvalidData('Redgifs gallery contains an unrelated item')
+            key = post(item)['value']
+            if key in items:
+                raise InvalidData('Redgifs gallery contains duplicate item identities')
+            items[key] = copy.deepcopy(item)
+        selected = post(seed)['value']
+        if selected not in items:
+            raise InvalidData('Redgifs gallery omits the requested item')
+        # Only the current gallery is needed. Later responses replace this
+        # in-memory binding, without adding an enduring membership ledger.
+        extractor._native_gallery_members = (identity, selected, items)
+        return result
+
+    extractor.api.gif, extractor.api.gallery = gif, gallery
+
+
+def linked_gallery_source(extractor, data):
+    from . import reddit_external, source
+    binding = getattr(extractor, '_native_gallery_members', None)
+    if binding is None or data.get('category') != 'redgifs':
+        return data
+    parent, category = source._context(data)
+    if category != 'reddit':
+        return data
+    identity, selected, members = binding
+    item = post(data)['value']
+    if item == selected:
+        return data
+    parent = source._reddit_attachment_context(parent)
+    linked = reddit_external.target(parent)
+    image = reddit_external.redgifs_image_id(parent.get('url'))
+    expected = linked['value'] if linked and linked['namespace'] == 'native:redgifs' else image
+    if expected != selected or data.get('gallery') != identity or item not in members:
+        raise InvalidData('Additional Redgifs gallery item has no verified Reddit link')
+    result = copy.deepcopy(members[item])
+    attachment(result, data.get('_url'))
+    result.update(category='redgifs', subcategory=extractor.subcategory,
+                  source_extractor_url=data['source_extractor_url'], _url=data['_url'])
+    return result
+
+
 def install(extractor, producer=None, *, standalone=False):
+    install_gallery(extractor)
     from gallery_dl.extractor.redgifs import RedgifsUserExtractor
     if not isinstance(extractor, RedgifsUserExtractor) or getattr(extractor, '_native_redgifs_evidence', False):
         return

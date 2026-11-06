@@ -208,6 +208,19 @@ def _twitter_url(value):
     return None
 
 
+def _reddit_attachment_context(data):
+    parents = data.get("crosspost_parent_list")
+    if not parents:
+        return data
+    if not isinstance(parents, list) or not isinstance(parents[-1], dict):
+        raise InvalidData("Invalid Reddit crosspost evidence")
+    parent = parents[-1]
+    parent_id = _id(parent.get("id"))
+    if data.get("crosspost_parent") not in {None, "", "t3_" + parent_id}:
+        raise InvalidData("Reddit crosspost identity is contradictory")
+    return parent
+
+
 def attachment(source):
     """Return the exact observed attachment or require review before download."""
     ref = post(source)
@@ -220,15 +233,7 @@ def attachment(source):
     if category in ('ytdl', 'ytdl-generic'):
         return ytdl_media.attachment(data)
     if category == "reddit":
-        parents = data.get("crosspost_parent_list")
-        if parents:
-            if not isinstance(parents, list) or not isinstance(parents[-1], dict):
-                raise InvalidData("Invalid Reddit crosspost evidence")
-            parent = parents[-1]
-            parent_id = _id(parent.get("id"))
-            if data.get("crosspost_parent") not in {None, "", "t3_" + parent_id}:
-                raise InvalidData("Reddit crosspost identity is contradictory")
-            data = parent
+        data = _reddit_attachment_context(data)
         selected = reddit_media(download_url)
         gallery = data.get("gallery_data")
         if isinstance(gallery, dict):
