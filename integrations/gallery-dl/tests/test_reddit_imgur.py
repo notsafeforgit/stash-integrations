@@ -228,6 +228,25 @@ class RedditImgurTests(test_gallery.unittest.TestCase):
         self.assertEqual(len(downloads), 2)
         self.assertIsNone(self.producer.failure_code)
 
+    def test_empty_album_may_omit_media_but_incomplete_response_stays_blocked(self):
+        for count in (0, 1, None, False):
+            with self.subTest(count=count):
+                def omitted(data):
+                    if data['id'] == 'Empty12':
+                        data.pop('media')
+                        data['image_count'] = count
+                downloads = []
+                status, _ = self.run_albums(reddit_data('empty', url='https://imgur.com/a/Empty12'),
+                                           reddit_data('next', url='https://imgur.com/a/Next123'),
+                                           change=omitted, downloads=downloads)
+                if type(count) is int and count == 0:
+                    self.assertEqual(status, 0)
+                    self.assertEqual(len(downloads), 2)
+                else:
+                    self.assertNotEqual(status, 0)
+                    self.assertEqual(downloads, [])
+                self.producer.failure_code = None
+
     def test_shared_server_album_and_attachment_contract(self):
         fixture = Path(__file__).resolve().parents[3] / 'pkg/archive/testdata/reddit-imgur-albums-v1.json'
         for case in json.loads(fixture.read_text())['cases']:

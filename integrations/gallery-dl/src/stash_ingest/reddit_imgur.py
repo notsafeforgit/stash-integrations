@@ -85,6 +85,10 @@ def install(extractor):
     def album(identity):
         result = original(identity)
         media = result.get('media')
+        # The API omits media entirely for an explicitly empty album. Do not
+        # infer emptiness for null, a missing count, or a positive count.
+        if 'media' not in result and type(result.get('image_count')) is int and result['image_count'] == 0:
+            media = result['media'] = []
         if (result.get('id') != identity or result.get('is_album') is not True
                 or not isinstance(media, list) or not 0 <= len(media) <= 4096
                 or type(result.get('image_count')) is not int or result['image_count'] != len(media)):

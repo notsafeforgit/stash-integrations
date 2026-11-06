@@ -37,6 +37,11 @@ def file_input(value):
     result = {key: value[key] for key in INPUT_KEYS}
     if "scan_collection_uuid" in value:
         result["scan_collection_uuid"] = identifier(value["scan_collection_uuid"])
+    if "deduplication_policy" in value:
+        from .dedupe_client import MEDIA_POLICY
+        if value["deduplication_policy"] != MEDIA_POLICY:
+            raise InvalidData("Unsupported duplicate intake policy")
+        result["deduplication_policy"] = MEDIA_POLICY
     return result
 
 
@@ -66,6 +71,8 @@ def preview(value, expected, root):
         raise InvalidData("Local-file preview filename differs")
     if value.get("existing_file_uuid"):
         identifier(value["existing_file_uuid"])
+    if "saved_post_count" in value:
+        integer(value["saved_post_count"], 0, 32)
     return value
 
 

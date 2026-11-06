@@ -31,8 +31,15 @@ def absolute(value):
 def configuration(value):
     required = {"format", "endpoint", "root", "root_uuid", "state_dir", "library_lock",
                 "lock_roots", "api_key_file", "fclones", "stamp_file"}
-    if not isinstance(value, dict) or set(value) - {'discovery_timeout'} != required or value["format"] != FORMAT:
+    if not isinstance(value, dict) or set(value) - {'discovery_timeout', 'media_policy', 'intake_collection_uuid'} != required or value["format"] != FORMAT:
         raise InvalidData("Invalid host dedupe configuration")
+    from .dedupe_client import MEDIA_POLICY
+    if "media_policy" in value and value["media_policy"] != MEDIA_POLICY:
+        raise InvalidData("Unsupported duplicate media policy")
+    if "intake_collection_uuid" in value:
+        identifier(value["intake_collection_uuid"])
+        if value.get("media_policy") != MEDIA_POLICY:
+            raise InvalidData("Duplicate intake requires the reviewed media policy")
     timeout = value.get('discovery_timeout', 7200)
     if type(timeout) is not int or not 60 <= timeout <= 86400:
         raise InvalidData('Dedupe discovery timeout must be 60 to 86400 seconds')
@@ -85,10 +92,12 @@ def publish_stamp(filename, now):
             os.unlink(temporary)
 
 
-def execute(value, *, before_backup=False, all_content=False):
+def execute(value, *, before_backup=False, all_content=False, resume_only=False):
     value = configuration(value)
     state, _ = private_directory(value["state_dir"])
     with exclusive_lock(state / "launcher.lock"):
+        if resume_only and not Journal.has_active(state):
+            return {"skipped": True, "reason": "no_pending_run"}
         # Pending requests always recover, even if an earlier completed run left
         # a recent stamp. Pre-backup discovery deliberately ignores the cooldown.
         if not before_backup and not Journal.has_active(state) and recent_stamp(value["stamp_file"], int(time.time())):
@@ -98,8 +107,11 @@ def execute(value, *, before_backup=False, all_content=False):
                                   lock_root=value["lock_roots"], key_file=value["api_key_file"], key_env="STASH_API_KEY",
                                   fclones=value["fclones"], all_content=all_content, report=None,
                                   request_timeout=900, lock_timeout=300,
+                                  media_policy=value.get('media_policy'), intake_collection_uuid=value.get('intake_collection_uuid'),
                                   discovery_timeout=value.get('discovery_timeout', 7200))
         result = run(args)
+        if result.get('waiting_for_intake') and not result.get('finished') and result.get('pending', 0) > 0:
+            return result
         if not result.get("finished") or result.get("pending") != 0:
             raise InvalidData("Dedupe did not finish; completion timestamp retained")
         publish_stamp(value["stamp_file"], int(time.time()))
@@ -111,9 +123,10 @@ def main(argv=None):
     parser.add_argument("--config", required=True)
     parser.add_argument("--before-backup", action="store_true")
     parser.add_argument("--all-content", action="store_true")
+    parser.add_argument("--resume-only", action="store_true", help="Recover pending work without starting another discovery scan")
     args = parser.parse_args(argv)
     try:
-        result = execute(load(args.config), before_backup=args.before_backup, all_content=args.all_content)
+        result = execute(load(args.config), before_backup=args.before_backup, all_content=args.all_content, resume_only=args.resume_only)
     except BlockingIOError:
         result = {"skipped": True, "reason": "busy"}
     except (InvalidData, Unavailable, UnicodeError) as error:

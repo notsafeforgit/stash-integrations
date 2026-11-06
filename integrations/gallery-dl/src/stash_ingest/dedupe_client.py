@@ -13,11 +13,13 @@ from .client import Unavailable
 from .encoding import InvalidData, decode, encode, identifier
 
 LIMIT = 16384
+MEDIA_POLICY = "earliest-fill-blanks-v1"
 BLOCKED = {
     "file_requires_intake", "archive_member_requires_review", "unsupported_file_type",
     "ambiguous_or_missing_media_owner", "archive_membership_requires_review",
     "different_or_empty_files", "different_media_owners", "duplicate_has_captions",
     "source_history_requires_review", "file_requires_rescan", "same_filesystem_entry",
+    "media_variants_require_review", "intake_failed", "intake_preview_changed", "intake_requires_review", "saved_metadata_required",
 }
 REJECTIONS = {"deduplication_preview_changed", "deduplication_bytes_differ", "file_not_found"}
 
@@ -37,8 +39,10 @@ def relative_path(value):
 
 
 def validate_pair(value):
-    if not isinstance(value, dict) or set(value) != {"root_uuid", "keep_path", "remove_path"}:
+    if not isinstance(value, dict) or set(value) - {"media_policy"} != {"root_uuid", "keep_path", "remove_path"}:
         raise InvalidData("Invalid deduplication pair")
+    if "media_policy" in value and value["media_policy"] != MEDIA_POLICY:
+        raise InvalidData("Unsupported duplicate media policy")
     identifier(value["root_uuid"])
     if relative_path(value["keep_path"]) == relative_path(value["remove_path"]):
         raise InvalidData("Deduplication paths must differ")
@@ -60,6 +64,10 @@ def validate_preview(value, pair):
     for key in ("media_uuid", "kept_file_uuid", "removed_file_uuid"):
         if value["eligible"] or value.get(key):
             identifier(value.get(key))
+    if value.get("merge_media_uuid"):
+        identifier(value["merge_media_uuid"])
+        if pair.get("media_policy") != MEDIA_POLICY or value["merge_media_uuid"] == value.get("media_uuid"):
+            raise InvalidData("Unrequested or invalid media merge")
     if value["eligible"] and (value["bytes"] == 0 or value["kept_file_uuid"] == value["removed_file_uuid"]):
         raise InvalidData("Eligible deduplication must identify distinct nonempty files")
     return value
@@ -78,6 +86,8 @@ def validate_request(value, pair):
 def validate_receipt(value, request):
     expected = {k: request[k] for k in ("root_uuid", "keep_path", "remove_path", "signature")}
     expected["uuid"] = request["request_uuid"]
+    if "media_policy" in request:
+        expected["media_policy"] = request["media_policy"]
     if not isinstance(value, dict) or any(value.get(k) != v for k, v in expected.items()):
         raise InvalidData("Deduplication receipt differs from the saved request")
     # Canonical identities may change after UUID adoption. The original request

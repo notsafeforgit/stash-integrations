@@ -176,7 +176,11 @@ def reddit_media(value):
         parts = parsed.path.strip("/").split("/")
         if parsed.hostname in {"i.redd.it", "preview.redd.it"} and len(parts) == 1:
             stem, dot, ext = parts[0].rpartition(".")
-            if not dot or ext.lower() not in {"jpg", "jpeg", "png", "webp", "avif", "jxl", "gif", "mp4", "webm"}:
+            if not dot:
+                # Reddit also returns bare CDN media IDs. File type is decided
+                # from the downloaded bytes, not invented from the URL.
+                stem = parts[0]
+            elif ext.lower() not in {"jpg", "jpeg", "png", "webp", "avif", "jxl", "gif", "mp4", "webm"}:
                 return None
         elif parsed.hostname == "v.redd.it" and len(parts) <= 2:
             stem = parts[0]

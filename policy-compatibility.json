@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "da0507c2051621e74f0a8830bef81eb871569979047584143da4ae554a634463",
+  "implementation_sha256": "a9fded38c80cb8ebf11bde084e25a868d38559a6ea5a04505987ca422ede6fde",
   "decision": "compatible",
-  "reason": "Adds opt-in REST-first Reddit JSON with OAuth fallback only for recognized HTTP 403 network-security blocks on public routes. Defaults and all previously admitted configurations retain their meaning. Enabling the new setting changes the policy hash and requires an explicit reviewed upgrade. Both routes preserve full post objects, date/ID filters, publication windows, t3 page/item checkpoints, archives and caller identities. Every HTTP response and Retry-After hint remains recorded; recoverable REST 403s are errors with an OAuth-fallback diagnostic rather than service-wide quota exhaustion. All 429s, ordinary account failures and failed OAuth requests retain normal failure/backoff handling. No HTML dependency, persistent fallback history, schema or capture contract change."
+  "reason": "Compatible fixes accept bare Reddit CDN media IDs and explicitly empty Imgur albums without weakening nonempty membership validation. Existing queues retain their IDs, windows, cursors, archives, capture contract and REST/OAuth behavior. Adds opt-in earliest-fill-blanks-v1 dedupe with native full-byte verification, single-file owner merging, preserved manual clears, source links and galleries. Optional saved-metadata intake is bounded and durably journaled; missing evidence and retired content require review. Schema-1 dedupe requests retain file-only meaning after journal migration. Dedupe options do not alter admitted crawl policies."
 }

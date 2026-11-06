@@ -2309,13 +2309,25 @@ them, and recovers committed receipts after interruption. Read-only discovery
 allows downloads and backups to continue; each candidate's preview/recovery/apply
 holds the existing backup lock plus every inventoried native worker publication
 barrier, releasing them between pairs. Stash
-verifies full bytes and preserves provenance; different media owners remain
-review cases. See the [client guide](https://github.com/notsafeforgit/stash/blob/develop/docs/native-file-deduplication.md#native-host-client)
+verifies full bytes and preserves provenance. Without an explicit policy,
+different media owners remain review cases. See the [client guide](https://github.com/notsafeforgit/stash/blob/develop/docs/native-file-deduplication.md#native-host-client)
 for arguments, persistent state and exit codes.
 `stash-dedupe-host` supplies the scheduled/pre-backup configuration,
 completion cooldown and private key-file handling. Its compact SQLite journal
 is inventoried as an operating database for coordinated backup. The installed
 host launcher selects this native caller.
+
+Set `media_policy` to `earliest-fill-blanks-v1` only with a supporting native
+server. Exact-byte duplicates with separate single-file media records then keep
+the earliest record, fill eligible blank dates/descriptions and preserve source
+URLs, galleries and explicit clears. Multi-file owners remain review cases.
+An explicit `intake_collection_uuid` additionally registers unindexed equal-byte
+files through native saved-metadata intake. The native preview must report saved
+posts for that exact location; missing evidence stays in review. No website fetch
+is involved. At most eight durable registration requests wait at once, and no
+pair is removed before both registrations finish. Schedule `--resume-only` for
+bounded continuation without another full-library scan. Journal schema 2 adds
+registration receipts while preserving schema-1 deletion requests unchanged.
 
 ## Historical source albums
 

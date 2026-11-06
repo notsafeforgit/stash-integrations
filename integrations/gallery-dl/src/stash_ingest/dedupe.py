@@ -80,10 +80,15 @@ def journal_database(directory, *, create=False):
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("PRAGMA synchronous=FULL")
         if (db.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
-                or db.execute("PRAGMA user_version").fetchone()[0] != 1):
+                or db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2)):
             raise InvalidData("Unsupported dedupe database")
         with db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("PRAGMA user_version").fetchone()[0] == 1:
+                db.execute("""CREATE TABLE registrations(run_uuid TEXT NOT NULL REFERENCES runs(uuid),
+                    path TEXT NOT NULL, body BLOB NOT NULL, result BLOB,
+                    PRIMARY KEY(run_uuid,path))""")
+                db.execute("PRAGMA user_version=2")
             yield db
 
 def private_directory(path):
@@ -204,7 +209,8 @@ class Journal:
         run = str(uuid.uuid4())
         manifest = {"format": FORMAT, "run_uuid": run, "config": config, "created_at": utc_now(),
                     "discovery_reviews": reviews,
-                    "pairs": [{"uuid": str(uuid.uuid4()), "pair": validate_pair({"root_uuid": config["root_uuid"], **pair})}
+                    "pairs": [{"uuid": str(uuid.uuid4()), "pair": validate_pair({"root_uuid": config["root_uuid"], **pair,
+                        **({"media_policy": config["media_policy"]} if config.get("media_policy") else {})})}
                               for pair in pairs]}
         body = encode(manifest, MAX_REPORT_BYTES)
         with journal_database(directory, create=True) as db:
@@ -291,7 +297,7 @@ class Journal:
         return report
 
 
-def apply_saved(client, journal, check=lambda: None, *, boundary=None):
+def apply_saved(client, journal, check=lambda: None, *, boundary=None, intake=None):
     for key, pair in journal.records.items():
         check()
         if key in journal.results:
@@ -301,13 +307,23 @@ def apply_saved(client, journal, check=lambda: None, *, boundary=None):
         # A backup taking the lock between pairs leaves the saved run resumable.
         with (boundary() if boundary else nullcontext(check)) as guarded:
             guarded()
-            apply_pair(client, journal, key, pair, guarded)
+            apply_pair(client, journal, key, pair, guarded, intake=intake)
     check()
-    return journal.finish()
+    if journal.report()["finished"]:
+        return journal.finish()
+    return {**journal.report(), **({"waiting_for_intake": True} if intake is not None and intake.waiting else {})}
 
 
-def apply_pair(client, journal, key, pair, check):
+def apply_pair(client, journal, key, pair, check, *, intake=None):
     if key not in journal.intents:
+        if intake is not None:
+            from .dedupe_intake import Review
+            try:
+                if not intake.recover(pair, check):
+                    return
+            except Review as error:
+                journal.save_result(key, {"state": "review", "reason": error.reason})
+                return
         try:
             preview = client.preview(pair)
         except Unavailable as error:
@@ -315,6 +331,16 @@ def apply_pair(client, journal, key, pair, check):
                 raise
             journal.save_result(key, {"state": "review", "reason": error.code})
             return
+        if not preview["eligible"]:
+            if preview["blocked_reason"] == "file_requires_intake" and intake is not None:
+                from .dedupe_intake import Review
+                try:
+                    if not intake.prepare(pair, check):
+                        return
+                    preview = client.preview(pair)
+                except Review as error:
+                    journal.save_result(key, {"state": "review", "reason": error.reason})
+                    return
         if not preview["eligible"]:
             journal.save_result(key, {"state": "review", "reason": preview["blocked_reason"]})
             return
@@ -352,6 +378,15 @@ def run(args):
     config = {"endpoint": client.endpoint, "root_uuid": identifier(args.root_uuid), "root": root,
               "worker_roots": [directory_identity(p) for p in roots],
               "library_lock": str(Path(args.library_lock).absolute()), "all_content": args.all_content}
+    if getattr(args, "media_policy", None):
+        from .dedupe_client import MEDIA_POLICY
+        if args.media_policy != MEDIA_POLICY:
+            raise InvalidData("Unsupported duplicate media policy")
+        config["media_policy"] = args.media_policy
+    if getattr(args, "intake_collection_uuid", None):
+        if not config.get("media_policy"):
+            raise InvalidData("Duplicate intake requires the reviewed media policy")
+        config["intake_collection_uuid"] = identifier(args.intake_collection_uuid)
     with exclusive_lock(state / "run.lock") as state_check:
         def check():
             state_check()
@@ -392,7 +427,12 @@ def run(args):
                                       timeout=getattr(args, 'discovery_timeout', 7200))
             check()
             journal = Journal.create(state, config, candidates.pairs, discovery_reviews=candidates.reviews)
-        return apply_saved(client, journal, check, boundary=boundary)
+        intake = None
+        if config.get("intake_collection_uuid"):
+            from .dedupe_intake import Registration
+            from .intake_client import IntakeClient
+            intake = Registration(journal, IntakeClient(client.endpoint, key_file=client.key_file, key_env=client.key_env), args.root)
+        return apply_saved(client, journal, check, boundary=boundary, intake=intake)
 
 
 def main(argv=None):
@@ -405,6 +445,8 @@ def main(argv=None):
     parser.add_argument("--fclones", default="/home/andrew/.cargo/bin/fclones")
     parser.add_argument("--report", help="Use a saved fclones JSON report instead of running discovery")
     parser.add_argument("--all-content", action="store_true")
+    parser.add_argument("--media-policy", choices=("earliest-fill-blanks-v1",))
+    parser.add_argument("--intake-collection-uuid", help="Explicit directory collection for unregistered equal-byte files")
     parser.add_argument("--request-timeout", type=float, default=900)
     parser.add_argument("--lock-timeout", type=float, default=300)
     parser.add_argument("--discovery-timeout", type=int, default=7200,

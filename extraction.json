@@ -46,6 +46,16 @@
       },
       "destination": "integrations/archive/tests/fixtures/source-run-digests.json",
       "reason": "Native Go digest vectors for compatible-policy admission and failed-attachment retry requests; copied exactly from core."
+    },
+    {
+      "revision": "ec4b8c57fc2f3b049543f2d239237d5c17b15292",
+      "paths": [
+        "pkg/archive/testdata/reddit-external-media-v1.json"
+      ],
+      "sha256": {
+        "pkg/archive/testdata/reddit-external-media-v1.json": "6c928333f4d6ac33442052864c1e8916666f6d068f0e5ca87b4485bb74649369"
+      },
+      "reason": "Shared Reddit media identity fixtures accept extensionless CDN URLs while rejecting unrelated media IDs."
     }
   ]
 }
