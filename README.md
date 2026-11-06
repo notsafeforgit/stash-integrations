@@ -57,8 +57,16 @@ make build
 ```
 
 Use Python 3.12+ and uv. Tests use synthetic, versioned corpora and mocked website
-responses; they do not scrape real accounts. `pkg/` contains the small shared
-contract fixtures and frozen upgrade DDL copied at the revision recorded in
+responses; they do not scrape real accounts. `make test` includes `make validate-ci`,
+which requires full commit SHAs for external GitHub Actions and reusable workflows,
+including steps inside local composite actions. Local `./` references follow this
+repository's revision; `docker://` actions require SHA-256 digests. Keep the upstream
+version in a comment beside each SHA and resolve annotated tags to their commit
+when updating pins. The checker uses a separate uv environment with a committed
+dependency lockfile.
+
+`pkg/` contains the small shared contract fixtures and frozen upgrade DDL copied
+at the revision recorded in
 [extraction.json](extraction.json). Stash retains the canonical fixtures and tests
 current APIs against these clients. No production records or credentials were
 copied during extraction.
