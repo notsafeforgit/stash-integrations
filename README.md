@@ -138,7 +138,7 @@ separate `account_suspended`, `account_deactivated`, `account_unavailable` and
 remain eligible for monthly rechecks. A missing or renamed handle, generic 404,
 or suspension does not establish permanent deletion.
 
-Release v0.6.43 records X profile access as `protected` or `blocked` in worker
+Release v0.6.44 records X profile access as `protected` or `blocked` in worker
 results and requests a 48-hour retry through the native `access_denied` outcome.
 Successful access resumes retained work. Provider retry hints and configured
 cooldowns can extend that interval.

@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "3662db4dfe8fe44ac8d2b597c3a86de1417b0742134677b7423fc6df4f0febc7",
+  "implementation_sha256": "8c3e3b4a3a3866154e12038e1136c4de5626b9fec6f246f22652ee7aecd9d194",
   "decision": "compatible",
-  "reason": "X profile listing failures retain explicit protected and blocked access flags in worker results and request a 48-hour recheck through the existing native access_denied retry API. Capture, requested coverage, archive, pagination and server outcome contracts remain compatible, with checkpoints retained until access is available."
+  "reason": "Completed Reddit originals can emit an undated directory placeholder during crosspost recursion. Suppress only those directories whose completion is confirmed in the configured archive before validating publication windows, so traversal continues to available posts. Real source dates, coverage, checkpoints, capture and archive contracts remain unchanged."
 }

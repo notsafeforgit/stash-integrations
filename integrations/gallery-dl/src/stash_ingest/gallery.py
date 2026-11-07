@@ -478,6 +478,12 @@ class NativeDownloadJob(job.DownloadJob):
                 except missing_media.MissingMedia as exc:
                     self._missing_owner()._native_missing_result = exc.status
                     return
+                if (kind == Message.Directory and self.extractor.category == 'reddit'
+                        and data.get('_native_archive_complete') is True
+                        and post_archive.contains(self.archive, data.get('id'))):
+                    # A completed recursive lookup can emit an empty directory
+                    # placeholder. It has no source date or media to process.
+                    continue
                 if kind == Message.Queue and (instagram.collection_queue(self.extractor, url, data)
                                               or social_media.collection_queue(self.extractor, url, data)
                                               or twitter_collection_queue(self.extractor, url, data)):

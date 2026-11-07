@@ -614,6 +614,34 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(self.events(kinds=None), before)
         self.assertEqual(self.archive_count(), 2)
 
+    def test_recursive_completed_gallery_skips_placeholder_before_date_validation(self):
+        from gallery_dl.extractor.reddit import RedditAPI
+        from stash_ingest import post_archive
+
+        self.assertIsNotNone(gdl_extractors.find('https://www.reddit.com/user/fixture/submitted/'))
+        self.producer.attachment_retries = True
+        config.set(('extractor', 'reddit'), 'recursion', 1)
+        config.set(('extractor', 'reddit'), 'parent-directory', True)
+        config.set(('extractor',), 'archive-format', '{id}_{filename}')
+        archive = gdl_archive.connect(str(self.directory / 'downloads.sqlite'), 'reddit', '{id}_{filename}')
+        try:
+            post_archive.record(archive, 'unavailable')
+        finally:
+            archive.close()
+        base = {'created_utc': 1790812800, 'num_comments': 0,
+                'is_video': False, 'is_self': False, 'selftext_html': None}
+        crossposts = [reddit_data(name, **base, url='https://www.reddit.com/gallery/' + original)
+                     for name, original in (('skipped', 'unavailable'), ('next', 'available'))]
+        available = reddit_data('available', **base)
+        task = self.task(*crossposts, fixture=RoutineRedditFixture)
+        with patch.object(RedditAPI, 'submission', return_value=(available, ())) as fetch:
+            self.assertEqual(task.run(), 0)
+        fetch.assert_called_once_with('available')
+        self.assertEqual([event['post']['value'] for event in self.events(kinds=('source.capture',))],
+                         ['postavailable'])
+        self.assertEqual(len(self.events(kinds=('file.completed',))), 1)
+        self.assertFalse(self.producer.failure_code)
+
     def test_archive_post_write_failure_does_not_finish_or_refetch_completed_bytes(self):
         self.producer.attachment_retries = True
         with patch('stash_ingest.post_archive.record', side_effect=sqlite3.OperationalError('disk full')):
