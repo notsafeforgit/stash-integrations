@@ -469,6 +469,21 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual((result['state'], result['error_code']), (state, code))
                 self.lease.finish.assert_called_once_with(state, error_code=code, error_scope='service:reddit')
 
+    def test_protected_and_blocked_accounts_request_two_day_checks(self):
+        for reason in ('protected', 'blocked'):
+            with self.subTest(reason=reason):
+                failure = SourceFailure('access_denied', 'service:twitter', account_access=reason)
+                task = Mock(run=Mock(side_effect=failure))
+                self.lease.finish.reset_mock()
+                self.lease.finish.return_value = {'state': 'queued'}
+                result = self.run_worker(lambda *args, **kwargs: task)
+                self.assertEqual((result['state'], result['error_code']), ('retry', 'access_denied'))
+                self.assertEqual(result['account_access'], reason)
+                self.assertEqual(result['retry_after_seconds'], 172800)
+                self.lease.finish.assert_called_once_with('retry', error_code='access_denied',
+                                                         error_scope='service:twitter', retry_after_seconds=172800)
+                self.assertEqual(self.downloaded, [])
+
     def test_redgifs_deletion_requires_native_support_and_finishes_without_success(self):
         document = json.loads((self.directory / 'worker.json').read_text())
         document['source_category'] = 'redgifs'

@@ -138,6 +138,11 @@ separate `account_suspended`, `account_deactivated`, `account_unavailable` and
 remain eligible for monthly rechecks. A missing or renamed handle, generic 404,
 or suspension does not establish permanent deletion.
 
+Release v0.6.43 records X profile access as `protected` or `blocked` in worker
+results and requests a 48-hour retry through the native `access_denied` outcome.
+Successful access resumes retained work. Provider retry hints and configured
+cooldowns can extend that interval.
+
 Deploy native schema 1000138 advertising `source_run_account_status_protocol: 1`
 and `source_run_redgifs_deletion_protocol: 1`,
 then explicitly upgrade reviewed v3 policies to v4 while writers are stopped and

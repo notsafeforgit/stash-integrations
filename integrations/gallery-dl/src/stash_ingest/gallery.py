@@ -441,6 +441,10 @@ class NativeDownloadJob(job.DownloadJob):
             if isinstance(exc, exception.AuthenticationError):
                 code = "authentication"
             elif isinstance(exc, exception.AuthorizationError):
+                from .account_errors import access_reason
+                reason = access_reason(self.extractor, exc)
+                if reason:
+                    self.producer.fail_source('access_denied', self._native_scope, account_access=reason)
                 code = "access_denied"
             elif isinstance(exc, exception.ChallengeError):
                 code = "challenge"

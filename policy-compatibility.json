@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "f99442a70f7ff99b5f7367f23cf5a797607b0fd8d5a594855161b2a611f10658",
+  "implementation_sha256": "3662db4dfe8fe44ac8d2b597c3a86de1417b0742134677b7423fc6df4f0febc7",
   "decision": "compatible",
-  "reason": "Completed Reddit post archive decisions now also suppress recursive original-post lookups from crossposts. The downloader continues through subsequent posts and honors parent-directory handling. Existing capture, execution, archive and pagination contracts retain their meaning, and reviewed archive decisions require no extra missing-media ledger."
+  "reason": "X profile listing failures retain explicit protected and blocked access flags in worker results and request a 48-hour recheck through the existing native access_denied retry API. Capture, requested coverage, archive, pagination and server outcome contracts remain compatible, with checkpoints retained until access is available."
 }

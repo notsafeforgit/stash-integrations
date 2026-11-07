@@ -143,6 +143,7 @@ def execute(box, client, configuration, run_uuid):
         outcome, error, result = "deferred", "worker_execution_failed", None
         producer = None
         error_scope = ""
+        account_access = None
         try:
             if lease.run.get("root_uuid") != configuration.root_uuid or lease.run.get("operation") != "download":
                 raise InvalidData("Claimed run changed its worker root or operation")
@@ -202,12 +203,13 @@ def execute(box, client, configuration, run_uuid):
         except SourceTurnComplete:
             outcome, error = "retry", "source_turn_complete"
         except SourceFailure as exc:
-            # Missing/private accounts can return or grant access later. The
-            # server checks missing profiles monthly and private profiles daily.
+            # Missing/private accounts can return or grant access later.
+            # The server schedules account-specific access and recovery checks.
             # Explicit Redgifs deletion retires only that account. A history
             # limit not consumed by the reviewed traversal remains unfinished.
             outcome = "deferred" if exc.code in {"authentication", "challenge", "source_history_limit", "account_deleted"} else "retry"
             error, error_scope = exc.code, exc.scope
+            account_access = exc.account_access
         except SourcePaused:
             result = {"state": "paused", "run_uuid": run_uuid, "error_code": "source_ownership_unavailable"}
         except Capacity:
@@ -238,6 +240,8 @@ def execute(box, client, configuration, run_uuid):
                         failure = {"error_code": error}
                         if error_scope:
                             failure["error_scope"] = error_scope
+                        if account_access:
+                            failure['retry_after_seconds'] = 48 * 60 * 60
                         finished = lease.finish(outcome, **failure)
                         result = {"state": "source_succeeded" if outcome == "succeeded" else outcome,
                                   "run_uuid": run_uuid, "run_state": finished["state"], "error_code": error}
@@ -263,6 +267,9 @@ def execute(box, client, configuration, run_uuid):
             result["state"] = "yielded"
         if error_scope:
             result["error_scope"] = error_scope
+        if account_access:
+            result['account_access'] = account_access
+            result['retry_after_seconds'] = 48 * 60 * 60
         result["intake_completion"] = "inspect_native_receipts"
         if delivery.failure:
             result["delivery_error"] = delivery.failure

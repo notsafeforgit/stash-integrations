@@ -28,7 +28,7 @@ def source_scope(value):
 class SourceFailure(RuntimeError):
     """A controlled service failure without website responses or private URLs."""
 
-    def __init__(self, code, scope, *, page_limit=None):
+    def __init__(self, code, scope, *, page_limit=None, account_access=None):
         if code not in {"source_busy", "rate_limited", "timeout", "extraction_failed", "authentication",
                         "access_denied", "challenge", "not_found", "source_history_limit", "account_deleted",
                         "account_suspended", "account_deactivated", "account_unavailable", "account_not_found"} or not source_scope(scope):
@@ -38,6 +38,10 @@ class SourceFailure(RuntimeError):
                 or type(page_limit) is not int or not 1 <= page_limit <= 1000000):
             raise InvalidData('Invalid provider history limit')
         self.page_limit = page_limit
+        if account_access is not None and (code != 'access_denied' or scope != 'service:twitter'
+                or account_access not in ('protected', 'blocked')):
+            raise InvalidData('Invalid account access attribution')
+        self.account_access = account_access
         super().__init__(code + " (" + scope + ")")
 
 

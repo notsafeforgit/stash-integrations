@@ -3,6 +3,26 @@
 from gallery_dl import exception
 
 
+def access_reason(extractor, error):
+    if (extractor.category != 'twitter'
+            or extractor.subcategory not in {'timeline', 'tweets', 'with-replies', 'highlights', 'media'}
+            or not isinstance(error, exception.AuthorizationError)
+            or error.message == 'Account temporarily locked'):
+        return None
+    user = getattr(extractor, '_user_obj', None)
+    if not isinstance(user, dict):
+        return None
+    relationship = user.get('relationship_perspectives') or user.get('legacy') or {}
+    privacy = user.get('privacy') or user.get('legacy') or {}
+    # The saved account lookup also survives gallery-dl's optional guest retry.
+    # Use its explicit access flags without parsing a handle from an error.
+    if relationship.get('blocked_by') is True:
+        return 'blocked'
+    if privacy.get('protected') is True and relationship.get('following') is not True:
+        return 'protected'
+    return None
+
+
 def missing_code(extractor, error):
     if not isinstance(error, exception.NotFoundError):
         return 'not_found'
