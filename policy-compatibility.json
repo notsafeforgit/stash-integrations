@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "8c3e3b4a3a3866154e12038e1136c4de5626b9fec6f246f22652ee7aecd9d194",
+  "implementation_sha256": "cf91e1ec9208ad549ee0588de7aa76b623588d7f6c7c3511e61808f6f622ccb9",
   "decision": "compatible",
-  "reason": "Completed Reddit originals can emit an undated directory placeholder during crosspost recursion. Suppress only those directories whose completion is confirmed in the configured archive before validating publication windows, so traversal continues to available posts. Real source dates, coverage, checkpoints, capture and archive contracts remain unchanged."
+  "reason": "Legacy Gfycat and GifDeliveryNetwork item aliases already handled by the Redgifs extractor reserve the Redgifs service they actually contact before metadata fetching. Original transcript URLs, pending child identity, capture, coverage and checkpoint semantics are preserved, including child-only retries and shared request backoff."
 }

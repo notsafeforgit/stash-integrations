@@ -666,6 +666,54 @@ class WrappedMetadataErrorTests(unittest.TestCase):
     def tearDown(self):
         config.clear()
 
+    def test_legacy_redgifs_links_reserve_the_actual_host_and_preserve_retry_context(self):
+        import requests
+        from gallery_dl.extractor.redgifs import RedgifsImageExtractor
+        actual = 'https://www.redgifs.com/watch/FixtureClip'
+        for legacy in ('https://gfycat.com/FixtureClip',
+                       'https://www.gfycat.com/gifs/detail/FixtureClip',
+                       'https://gifdeliverynetwork.com/FixtureClip'):
+            with self.subTest(legacy=legacy):
+                contacts, lookups = [], []
+                response = requests.Response()
+                response.status_code = 410
+                response.url = 'https://api.redgifs.com/v2/gifs/FixtureClip'
+                response._content = b'{"error":{"description":"deleted"}}'
+                response._content_consumed = True
+
+                def deleted(*args, **kwargs):
+                    raise exception.HttpError(response=response)
+
+                def find(url):
+                    lookups.append(url)
+                    if url == URL:
+                        return factory(Post, url, [(Message.Directory, '', post_data(url=legacy)),
+                            (Message.Queue, legacy, post_data(url=legacy))])
+                    target = RedgifsImageExtractor.from_url(url)
+                    target.cache = lambda *args, **kwargs: 'private-auth-token'
+                    target.request_json = deleted
+                    return target
+
+                def reserve(url):
+                    contacts.append(url)
+                    self.assertIn(url, (URL, actual))
+                    return url == URL
+
+                saved = collect(URL, {}, factory=find, reserve_source=reserve)
+                self.assertEqual(saved['pending'], [
+                    {'url': legacy, 'parent': 1, 'depth': 1, 'reason': 'source_busy'}])
+                self.assertEqual(contacts, [URL, actual])
+                contacts.clear()
+                lookups.clear()
+                resumed = collect(URL, {}, saved, factory=find,
+                                  reserve_source=lambda url: contacts.append(url) or True)
+                self.assertEqual(contacts, [actual])
+                self.assertEqual(lookups, [legacy])
+                self.assertFalse(resumed['pending'])
+                self.assertEqual(resumed['unresolved'][0]['url'], legacy)
+                self.assertEqual(resumed['unresolved'][0]['reason'], 'not_found')
+                self.assertEqual(resumed['records'], saved['records'])
+
     def test_actual_redgifs_wrapper_preserves_status_and_parent_on_child_retry(self):
         import requests
         from gallery_dl.extractor.redgifs import RedgifsImageExtractor

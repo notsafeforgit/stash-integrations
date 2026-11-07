@@ -157,6 +157,7 @@ def collect(url, settings, resume=None, *, factory=None, check=lambda: None, res
             checkpoint_version=None):
     from gallery_dl import config, extractor, util, version
     from gallery_dl.extractor.common import Extractor, Message
+    from gallery_dl.extractor.redgifs import RedgifsImageExtractor
     from .gallery import SUPPORTED_VERSION, twitter_evidence
     from . import instagram
 
@@ -177,7 +178,12 @@ def collect(url, settings, resume=None, *, factory=None, check=lambda: None, res
         check()
         # Initialization can authenticate or contact the website. Acquire its
         # service before initialization, including newly discovered children.
-        if reserve_source is not None and not reserve_source(target.url):
+        contact = target.url
+        if isinstance(target, RedgifsImageExtractor):
+            # Gfycat/GifDeliveryNetwork item aliases use Redgifs' API. Reserve
+            # that service while retaining the original URL in the transcript.
+            contact = target.root + '/watch/' + target.key
+        if reserve_source is not None and not reserve_source(contact):
             raise SourceBusy()
         _configure_context(target, bundle, parent)
         target.initialize()
