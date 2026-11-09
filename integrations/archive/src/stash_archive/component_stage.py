@@ -27,13 +27,22 @@ def signature(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
+def stat_summary(info):
+    return (f"device={info.st_dev}, inode={info.st_ino}, size={info.st_size}, "
+            f"mtime_ns={info.st_mtime_ns}, ctime_ns={info.st_ctime_ns}")
+
+
 def digest_file(path):
     with open_regular(path) as incoming:
         before = os.fstat(incoming.fileno())
         digest = hashlib.file_digest(incoming, "sha256").hexdigest()
         after = os.fstat(incoming.fileno())
-    if signature(before) != signature(after) or signature(after) != signature(Path(path).lstat()):
-        raise InvalidArchive("Staged component changed while checking its digest")
+    current = Path(path).lstat()
+    if signature(before) != signature(after) or signature(after) != signature(current):
+        raise InvalidArchive(
+            f"Staged component changed while checking its digest (path={str(path)!r}, "
+            f"opened_before=[{stat_summary(before)}], opened_after=[{stat_summary(after)}], "
+            f"path_after=[{stat_summary(current)}])")
     return digest, after.st_size
 
 
@@ -47,13 +56,20 @@ def copy_file(source, target, reserve):
             while chunk := incoming.read(1 << 20):
                 count += len(chunk)
                 if count > before.st_size:
-                    raise InvalidArchive("External configuration grew during capture")
+                    raise InvalidArchive(
+                        f"External configuration grew during capture (source={str(source)!r}, "
+                        f"expected_bytes={before.st_size}, bytes_read={count})")
                 require_space(target.parent, before.st_size - count, reserve)
                 output.write(chunk)
             output.flush()
             os.fsync(output.fileno())
-        if count != before.st_size or signature(before) != signature(os.fstat(incoming.fileno())) or signature(before) != signature(source.lstat()):
-            raise InvalidArchive("External configuration changed during capture")
+        after = os.fstat(incoming.fileno())
+        current = source.lstat()
+        if count != before.st_size or signature(before) != signature(after) or signature(before) != signature(current):
+            raise InvalidArchive(
+                f"External configuration changed during capture (source={str(source)!r}, copied_bytes={count}, "
+                f"opened_before=[{stat_summary(before)}], opened_after=[{stat_summary(after)}], "
+                f"path_after=[{stat_summary(current)}])")
 
 
 class ComponentStage:
