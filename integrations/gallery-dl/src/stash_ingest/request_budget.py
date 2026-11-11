@@ -97,11 +97,20 @@ def request(producer, url):
         with lease.lock:
             result = lease.client._request('POST', '/runs/' + lease.run_uuid + '/requests', encode({
                 'owner_uuid': lease.owner, 'fence': lease.run['fence'], 'request_uuid': request_id,
-                'url': url, 'class': producer.scan_mode, 'operation': operation(url)}, 16384))
+                'url': url, 'class': producer.scan_mode, 'operation': operation(url),
+                'account_monitoring_protocol': 1}, 16384))
         if (not isinstance(result, dict) or result.get('request_uuid') != request_id
                 or not source_scope(result.get('source_scope')) or type(result.get('ready')) is not bool
                 or type(result.get('wait_ms')) is not int or not 0 <= result['wait_ms'] <= 30000):
             raise InvalidData('Invalid shared source request permit')
+        if result.get('pause_reason') is not None:
+            if (result['pause_reason'] != 'account_unavailable' or result['ready'] or result['wait_ms'] != 0
+                    or result['source_scope'] != 'service:reddit' or producer.scan_mode != 'routine'):
+                raise InvalidData('Invalid account monitoring pause')
+            # This is a local scheduling decision, not a new website failure.
+            # Persist it through the normal cooperative exit and release the
+            # worker immediately; the server preserves pending coverage.
+            producer.fail_source('account_check_pending', result['source_scope'])
         if result['ready']:
             producer.check()
             return result

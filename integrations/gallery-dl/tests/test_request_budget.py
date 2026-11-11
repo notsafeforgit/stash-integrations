@@ -8,7 +8,7 @@ from unittest.mock import Mock
 from stash_ingest import request_budget
 from stash_ingest.client import Unavailable
 from stash_ingest.encoding import decode
-from stash_ingest.runs import SourcePaused
+from stash_ingest.runs import SourcePaused, SourceFailure
 import test_producer
 
 
@@ -38,6 +38,25 @@ class BudgetTests(unittest.TestCase):
         with self.assertRaises(SourcePaused):
             self.producer.request_source('https://x.com/i/api/graphql/hash/UserMedia')
         self.assertEqual(self.lease.failure, 'source_request_unavailable')
+
+    def test_unavailable_profile_releases_turn_without_waiting_or_http(self):
+        def request(method, path, body):
+            value = decode(body)
+            self.assertEqual(value['account_monitoring_protocol'], 1)
+            return {'request_uuid': value['request_uuid'], 'source_scope': 'service:reddit',
+                    'ready': False, 'wait_ms': 0, 'pause_reason': 'account_unavailable'}
+        self.lease.client._request = Mock(side_effect=request)
+        self.lease.stop = Mock()
+        self.producer.scan_mode = 'routine'
+        with self.assertRaises(SourceFailure) as raised:
+            self.producer.request_source('https://www.reddit.com/search.json?q=author%3Aexample')
+        self.assertEqual(raised.exception.code, 'account_check_pending')
+        self.lease.stop.wait.assert_not_called()
+        self.lease.client._request.assert_called_once()
+        # gallery-dl can catch an extraction exception; the producer still
+        # retains the pause so no successful coverage can be reported.
+        with self.assertRaises(SourceFailure):
+            self.producer.check()
 
     def test_rate_limit_hints_are_shared_and_bounded(self):
         response = SimpleNamespace(status_code=200, headers={'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '45.5'})

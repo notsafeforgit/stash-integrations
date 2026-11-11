@@ -31,7 +31,7 @@ class SourceFailure(RuntimeError):
     def __init__(self, code, scope, *, page_limit=None, account_access=None):
         if code not in {"source_busy", "rate_limited", "timeout", "extraction_failed", "authentication",
                         "access_denied", "challenge", "not_found", "source_history_limit", "account_deleted",
-                        "account_suspended", "account_deactivated", "account_unavailable", "account_not_found"} or not source_scope(scope):
+                        "account_suspended", "account_deactivated", "account_unavailable", "account_not_found", "account_check_pending"} or not source_scope(scope):
             raise InvalidData("Invalid source failure attribution")
         self.code, self.scope = code, scope
         if page_limit is not None and (code != 'source_history_limit' or scope != 'service:redgifs'

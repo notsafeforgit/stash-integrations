@@ -138,6 +138,17 @@ separate `account_suspended`, `account_deactivated`, `account_unavailable` and
 remain eligible for monthly rechecks. A missing or renamed handle, generic 404,
 or suspension does not establish permanent deletion.
 
+Release v0.6.47 requires `source_reddit_monitoring_protocol: 1`. After completed
+Reddit history, routine author searches honor a saved missing/suspended profile
+result. Request admission returns a local `account_check_pending` pause without
+contacting Reddit, retaining coverage and checkpoints. Monthly profile checks
+continue; a healthy profile observation resumes searches even if later media
+work fails. Initial and explicit recovery passes remain available. This reuses
+existing observations and creates no additional website status requests or
+per-post availability ledger. Deploy the supporting native server first while
+workers are paused; execution v9, saved policies and producer schema 25 remain
+unchanged.
+
 Release v0.6.45 records X profile access as `protected` or `blocked` in worker
 results and requests a 48-hour retry through the native `access_denied` outcome.
 Successful access resumes retained work. Provider retry hints and configured

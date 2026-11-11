@@ -113,6 +113,8 @@ def execute(box, client, configuration, run_uuid):
             or "attachment.download" not in capabilities.get("kinds", [])
             or capabilities.get("file_ingestion") is not True):
         raise Unavailable("native_download_worker_unavailable")
+    if capabilities.get('source_reddit_monitoring_protocol') != 1:
+        raise Unavailable('native_reddit_monitoring_unavailable')
     if capabilities.get('source_run_account_status_protocol') != 1:
         raise Unavailable('native_account_status_unavailable')
     if configuration.source_category == 'reddit' and (capabilities.get('account_profile_protocol') != 1
@@ -208,7 +210,7 @@ def execute(box, client, configuration, run_uuid):
             # Explicit Redgifs deletion retires only that account. A history
             # limit not consumed by the reviewed traversal remains unfinished.
             outcome = "deferred" if exc.code in {"authentication", "challenge", "source_history_limit", "account_deleted"} else "retry"
-            error, error_scope = exc.code, exc.scope
+            error, error_scope = exc.code, "" if exc.code == "account_check_pending" else exc.scope
             account_access = exc.account_access
         except SourcePaused:
             result = {"state": "paused", "run_uuid": run_uuid, "error_code": "source_ownership_unavailable"}

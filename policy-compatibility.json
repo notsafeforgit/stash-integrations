@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "cf91e1ec9208ad549ee0588de7aa76b623588d7f6c7c3511e61808f6f622ccb9",
+  "implementation_sha256": "d061d4328281092fbb9522c54808f641af09eaeeba3de5c51adab12f859281c0",
   "decision": "compatible",
-  "reason": "Legacy Gfycat and GifDeliveryNetwork item aliases already handled by the Redgifs extractor reserve the Redgifs service they actually contact before metadata fetching. Original transcript URLs, pending child identity, capture, coverage and checkpoint semantics are preserved, including child-only retries and shared request backoff."
+  "reason": "Honor the server account-monitoring pause before routine Reddit author-search HTTP requests after completed history. Release the lease without spending HTTP budget or recording a fresh website failure; preserve pending coverage, checkpoints and completed-post semantics. Initial and explicit recovery traversals remain admitted, monthly profile checks resume retained searches on recovery. Requires native source_reddit_monitoring_protocol 1; execution v9 and capture v1 are unchanged."
 }

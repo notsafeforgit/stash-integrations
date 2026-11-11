@@ -43,6 +43,7 @@ class WorkerTests(unittest.TestCase):
                                                      "source_run_redgifs_pagination_protocol": 1,
                                                      "source_run_redgifs_deletion_protocol": 1,
                                                      "source_run_account_status_protocol": 1,
+                                                     "source_reddit_monitoring_protocol": 1,
                                                      "source_run_instagram_pagination_protocol": 1,
                                                      "attachment_download_protocol": 1, "max_attachment_download_bytes": 16384, "file_transformation_protocol": 1,
                                                      "account_profile_protocol": 1, "max_account_profile_bytes": 131072,
@@ -456,6 +457,14 @@ class WorkerTests(unittest.TestCase):
                 result = self.run_worker(lambda *a, **kw: task)
                 self.assertEqual(result["state"], state)
                 self.lease.finish.assert_called_once_with(state, error_code=code)
+
+    def test_account_monitoring_pause_preserves_pending_work_without_source_failure(self):
+        task = Mock(run=Mock(side_effect=SourceFailure('account_check_pending', 'service:reddit')))
+        result = self.run_worker(lambda *a, **kw: task)
+        self.lease.finish.assert_called_once_with('retry', error_code='account_check_pending')
+        self.assertEqual(result['error_code'], 'account_check_pending')
+        self.assertNotIn('error_scope', result)
+        self.assertEqual(self.downloaded, [])
 
     def test_account_access_failures_retry_but_credentials_need_attention(self):
         for code in ('not_found', 'account_not_found', 'account_suspended', 'account_deactivated', 'account_unavailable',
