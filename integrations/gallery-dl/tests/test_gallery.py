@@ -18,7 +18,7 @@ from gallery_dl import archive as gdl_archive
 from gallery_dl import extractor as gdl_extractors
 from gallery_dl.extractor.common import Extractor, Message
 from gallery_dl.extractor import twitter
-from gallery_dl.extractor.twitter import TwitterExtractor
+from gallery_dl.extractor.twitter import TwitterAPI, TwitterExtractor
 from gallery_dl.extractor.reddit import RedditExtractor
 from gallery_dl.extractor.redgifs import RedgifsAPI, RedgifsImageExtractor
 
@@ -1101,18 +1101,30 @@ class GalleryTests(unittest.TestCase):
                 output.write(b"fixture " + url.encode())
             return True
 
+        # The removed `timeline` include routes to its configured timeline.
         cases = [("https://x.com/example", include, child) for include, child in (
-            ("timeline", twitter.TwitterTimelineExtractor), ("tweets", twitter.TwitterTweetsExtractor),
+            ("timeline", twitter.TwitterMediaExtractor), ("tweets", twitter.TwitterTweetsExtractor),
             ("media", twitter.TwitterMediaExtractor), ("with-replies", twitter.TwitterWithRepliesExtractor),
-            ("highlights", twitter.TwitterHighlightsExtractor), ("likes", twitter.TwitterLikesExtractor))]
-        cases.append(("https://x.com/i/user/99", "timeline", twitter.TwitterTimelineExtractor))
+            ("reposts", twitter.TwitterRepostsExtractor), ("highlights", twitter.TwitterHighlightsExtractor))]
+        cases.append(("https://x.com/i/user/99", "timeline", twitter.TwitterMediaExtractor))
+        listed = lambda *_: iter(copy.deepcopy([outside, record]))
+
+        def user_id(api, handle):
+            api.extractor._user, api.extractor._user_obj = {"name": "example", "id": "99"}, {}
+            return "99"
+
         for target, include, child in cases:
             with self.subTest(target=target, include=include):
                 self.lease.run["target_url"] = target
                 config.set(("extractor", "twitter"), "include", [include])
+                # Media and posts read the timelines through the phased listing.
                 with patch.object(TwitterExtractor, "login"), \
                      patch.object(TwitterExtractor, "metadata", return_value={}), \
-                     patch.object(child, "tweets", lambda _: iter(copy.deepcopy([outside, record]))), \
+                     patch.object(child, "tweets", listed), \
+                     patch.object(TwitterAPI, "_user_id", user_id), \
+                     patch.object(TwitterAPI, "user_media_photos", listed), \
+                     patch.object(TwitterAPI, "user_media_videos", lambda *_: iter(())), \
+                     patch.object(TwitterAPI, "user_original_timeline", listed), \
                      patch.object(NativeDownloadJob, "download", download):
                     # Other fixtures instantiate extractors directly, which
                     # compiles their patterns without registering the module.
@@ -1126,16 +1138,28 @@ class GalleryTests(unittest.TestCase):
                 self.assertEqual(events[0]["post"], {"namespace": "native:twitter", "value": lower})
                 self.assertEqual(events[1]["source"]["attachment"]["value"], "101")
 
+    def test_twitter_profile_that_selects_no_listing_cannot_complete(self):
+        # gallery-dl only warns about an unknown include and dispatches nothing.
+        self.lease.run["target_url"] = "https://x.com/example"
+        config.set(("extractor", "twitter"), "include", ["no-such-route"])
+        with patch.object(TwitterExtractor, "login"):
+            task = NativeDownloadJob(twitter.TwitterUserExtractor.from_url(self.lease.run["target_url"]),
+                                     producer=self.producer, lock_directory=self.locks)
+            self.assertNotEqual(task.run(), 0)
+        self.assertEqual(self.producer.failure_code, "source_rejected")
+        self.assertEqual(self.events(), [])
+
     def test_twitter_profile_routing_does_not_exempt_posts_or_unrelated_children(self):
         parent = twitter.TwitterUserExtractor.from_url("https://x.com/example")
-        child = twitter.TwitterTimelineExtractor
+        child = twitter.TwitterMediaExtractor
         data = {"_extractor": child}
-        self.assertTrue(twitter_collection_queue(parent, "https://x.com/example/timeline", data))
+        self.assertTrue(twitter_collection_queue(parent, "https://x.com/example/media", data))
+        self.assertTrue(twitter_collection_queue(parent, "https://x.com/example/media?filter=video", data))
         self.assertFalse(twitter_collection_queue(parent, "https://example.test/", data))
-        self.assertFalse(twitter_collection_queue(parent, "https://x.com/example/timeline", {**data, "tweet_id": 123}))
+        self.assertFalse(twitter_collection_queue(parent, "https://x.com/example/media", {**data, "tweet_id": 123}))
         self.assertFalse(twitter_collection_queue(parent, "https://x.com/example/photo", {"_extractor": twitter.TwitterAvatarExtractor}))
-        self.assertFalse(twitter_collection_queue(child.from_url("https://x.com/example/timeline"),
-                                                 "https://x.com/example/timeline", data))
+        self.assertFalse(twitter_collection_queue(child.from_url("https://x.com/example/media"),
+                                                 "https://x.com/example/media", data))
 
     def test_actual_twitter_transformation_retains_original_membership_and_each_media_id(self):
         self.narrow_window()

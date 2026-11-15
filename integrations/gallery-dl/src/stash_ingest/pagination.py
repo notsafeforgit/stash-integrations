@@ -11,8 +11,9 @@ from urllib.parse import urlsplit
 from .encoding import InvalidData
 
 KEYS = {'extractor', 'url', 'cursor', 'item'}
-TWITTER_LISTINGS = frozenset({'UserMedia', 'UserTweets', 'UserTweetsAndReplies',
-                             'UserHighlightsTweets', 'Likes', 'SearchTimeline',
+TWITTER_LISTINGS = frozenset({'UserPhotoTimeline', 'UserVideoTimeline', 'UserOriginalsTimeline',
+                             'UserRepliesTimeline', 'UserRepostsTimeline', 'UserHighlightsTweets',
+                             'UserArticlesTweets', 'Likes', 'SearchTimeline',
                              'ListLatestTweetsTimeline', 'Bookmarks'})
 
 
@@ -89,22 +90,25 @@ def install(target, producer):
 
         target.config, target.request = configuration, request
     elif target.category == 'twitter' and hasattr(target, 'api'):
-        original_config = target.config
+        from . import twitter_listing
+        # Media and posts timelines use phased checkpoints. Other listings keep
+        # the remote cursor of their single gallery-dl pagination call.
+        listing = twitter_listing.install(target, producer)
+        if listing is None:
+            original_config = target.config
 
-        def configuration(key, default=None):
-            if key == 'cursor' and resume is not None:
-                return resume['cursor'] or True
-            return original_config(key, default)
+            def configuration(key, default=None):
+                if key == 'cursor' and resume is not None:
+                    return resume['cursor'] or True
+                return original_config(key, default)
 
-        target.config = configuration
+            target.config = configuration
         original_call = target.api._call
 
         def call(endpoint, params, *args, **kwargs):
             if endpoint.rsplit('/', 1)[-1] in TWITTER_LISTINGS:
                 variables = json.loads(params.get('variables') or '{}')
-                cursor = target._cursor or (resume['cursor'] if resume is not None else '')
-                if target.subcategory != 'timeline':
-                    cursor = variables.get('cursor') or ''
+                cursor = (variables.get('cursor') or '') if listing is None else listing.page(endpoint, variables)
                 producer.begin_page({'extractor': category, 'url': target.url, 'cursor': cursor, 'item': ''})
             return original_call(endpoint, params, *args, **kwargs)
 

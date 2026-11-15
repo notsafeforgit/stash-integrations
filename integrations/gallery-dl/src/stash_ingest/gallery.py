@@ -191,14 +191,16 @@ def atomic_text(path, encoding="utf-8", newline=None):
             os.unlink(temporary)
 
 
+TWITTER_COLLECTIONS = ("TwitterTweetsExtractor", "TwitterMediaExtractor", "TwitterWithRepliesExtractor",
+                       "TwitterRepostsExtractor", "TwitterHighlightsExtractor", "TwitterLikesExtractor")
+
+
 def twitter_collection_queue(extractor, url, data):
     """A profile dispatcher routes to dated post collections, not a post itself."""
     from gallery_dl.extractor import twitter
 
     child = data.get("_extractor")
-    allowed = (twitter.TwitterTimelineExtractor, twitter.TwitterTweetsExtractor,
-               twitter.TwitterMediaExtractor, twitter.TwitterWithRepliesExtractor,
-               twitter.TwitterHighlightsExtractor, twitter.TwitterLikesExtractor)
+    allowed = tuple(getattr(twitter, name) for name in TWITTER_COLLECTIONS if hasattr(twitter, name))
     return (isinstance(extractor, twitter.TwitterUserExtractor)
             and set(data) <= {"_extractor", "category", "subcategory"}
             and data.get("category", "twitter") == "twitter"
@@ -465,11 +467,17 @@ class NativeDownloadJob(job.DownloadJob):
         def guarded():
             self.producer.check()
             iterator = iter(messages)
+            profile = self.extractor.category == 'twitter' and self.extractor.subcategory == 'user'
+            routed = False
             while True:
                 self.producer.check()
                 try:
                     kind, url, data = self._source_operation(next, iterator)
                 except StopIteration:
+                    if profile and not routed:
+                        # gallery-dl only warns about an unknown include. A
+                        # profile that reads nothing must not complete history.
+                        raise InvalidData('Twitter profile configuration selects no supported listing')
                     self._finish_post()
                     return
                 except deleted_media.DeletedMedia as exc:
@@ -478,6 +486,7 @@ class NativeDownloadJob(job.DownloadJob):
                 except missing_media.MissingMedia as exc:
                     self._missing_owner()._native_missing_result = exc.status
                     return
+                routed = True
                 if (kind == Message.Directory and self.extractor.category == 'reddit'
                         and data.get('_native_archive_complete') is True
                         and post_archive.contains(self.archive, data.get('id'))):

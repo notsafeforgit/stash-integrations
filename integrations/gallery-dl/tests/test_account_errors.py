@@ -30,6 +30,7 @@ class AccountErrorTests(unittest.TestCase):
                     api.exc = exception
                     api._json_dumps = json.dumps
                     api.features_pagination = {}
+                    api.field_toggles = {}
                     api.headers = {'x-twitter-auth-type': 'OAuth2Session'}
                     api._call = Mock(return_value={'data': {}})
                     producer = Mock()
@@ -37,7 +38,7 @@ class AccountErrorTests(unittest.TestCase):
                         raise SourceFailure(code, scope, **details)
                     producer.fail_source.side_effect = fail
                     job = SimpleNamespace(extractor=extractor, producer=producer, _native_scope='service:twitter')
-                    posts = api._pagination_tweets('/UserMedia', {'count': 50})
+                    posts = api._pagination_tweets('/UserPhotoTimeline', {'count': 50})
                     with self.assertRaises(SourceFailure) as raised:
                         NativeDownloadJob._source_operation(job, next, posts)
                     self.assertEqual(raised.exception.code, 'access_denied')
@@ -93,7 +94,7 @@ class AccountErrorTests(unittest.TestCase):
                 job = SimpleNamespace(extractor=extractor, producer=producer, _native_scope='service:twitter')
                 for identity in ('example', 'id:123456'):
                     with self.assertRaises(SourceFailure) as raised:
-                        NativeDownloadJob._source_operation(job, api._user_id_by_screen_name, identity)
+                        NativeDownloadJob._source_operation(job, api._user_id, identity)
                     self.assertEqual(raised.exception.code, code)
                     self.assertEqual(raised.exception.scope, 'service:twitter')
                     self.assertNotIn(message, str(raised.exception))

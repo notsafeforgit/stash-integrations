@@ -278,11 +278,42 @@ posts are still visited. Linked child work uses its accepted parent post's date.
 Postprocessor initialization waits for an accepted post, and its proposed
 destination is checked before initialization or post callbacks can run.
 
-Twitter profile URLs dispatch to the configured timeline, tweets, media, replies,
+Twitter profile URLs dispatch to the configured tweets, media, replies, reposts,
 highlights or likes collection. That routing message has no publication date;
 the child applies the original window to each actual tweet. This exception only
 accepts the pinned profile dispatcher's post-collection routes, not undated
-tweets, profile pictures or unrelated child extractors.
+tweets, profile pictures or unrelated child extractors. gallery-dl 1.32.20
+removed the combined `timeline` route; an `include` that still names it routes
+to the timeline selected by `timeline.strategy` (normally `media`). A profile
+whose `include` selects no route fails as `source_rejected` instead of
+completing without reading anything.
+
+### Twitter timelines and the history search
+
+`stash_ingest.twitter_listing` reads the media route as two timelines, photos
+then videos, and the posts route as the originals timeline. Its page
+checkpoints (`twitter-listing-v1:`) record the phase, any search bound and the
+remote cursor, so a resumed run continues the right timeline. A first-page
+checkpoint is still the empty cursor saved by earlier releases. A checkpoint
+from the removed timeline endpoints restarts its listing from the first page,
+without treating archived posts as the end of a routine check.
+
+Routine checks stop each timeline separately at its archived boundary. A post
+that also has a photo is not a boundary in the video timeline, since the photo
+timeline may have already downloaded it in this run.
+
+Runs with no lower date bound (`initial` and `recovery` scans: new-account
+imports and explicit recovery) then search `from:<account>` for older posts.
+The search starts where the earliest-ending timeline stopped, which is the
+last post it listed. Each search is cursor-paged and the next begins below the
+last post the previous one reached (`max_id`), until one finds nothing. Like
+upstream's removed traversal, the search is restricted to posts with links
+unless `text-tweets` is enabled, with an unfiltered search only when that finds
+nothing. X search can still omit posts, so this is the available history, not
+proof of completeness. A protected account this viewer does not follow fails
+with `access_denied`/`protected` even if X returns an empty timeline. Stash
+rechecks it every two days without exhausting its retries, so its import runs
+in full once access is granted.
 
 Date limits apply to each extractor instance. They replace inherited
 `date-min`, `date-max`, `date-after` and `date-before` without changing the shared
@@ -3298,6 +3329,11 @@ the service reservation before extractor initialization, and stops at the page
 boundary. It constructs no download job, archive or postprocessor and never
 follows queued media/child URLs. Website settings stay in the private child
 process input. The in-process `collect` helper is only for that child and tests.
+For Twitter `/timeline` URLs, a page is one request of the same listing as a
+full-history download: the posts timeline (discovery enables text posts and
+reposts), then the unfiltered history search. Its cursor is the listing
+checkpoint; a cursor from the removed timeline extractor returns
+`invalid_checkpoint`.
 
 The `stash-discovery-page-v1` result binds the exact profile URL, input cursor,
 next cursor, extractor/retention versions and compact metadata records. Empty

@@ -5,7 +5,7 @@ from gallery_dl import exception
 
 def access_reason(extractor, error):
     if (extractor.category != 'twitter'
-            or extractor.subcategory not in {'timeline', 'tweets', 'with-replies', 'highlights', 'media'}
+            or extractor.subcategory not in {'tweets', 'with-replies', 'reposts', 'highlights', 'media'}
             or not isinstance(error, exception.AuthorizationError)
             or error.message == 'Account temporarily locked'):
         return None

@@ -143,17 +143,20 @@ class PaginationTests(unittest.TestCase):
         self.assertEqual(self.lease.pages[-1]['cursor'], 't3_next')
 
     def test_twitter_page_cursor_is_used_without_replaying_previous_pages(self):
+        # Media and posts timelines use twitter_listing's phased checkpoints.
+        # Other single Twitter listings keep their remote cursor directly.
         config.clear()
         self.addCleanup(config.clear)
-        target = twitter.TwitterMediaExtractor.from_url('https://x.com/example/media')
+        target = twitter.TwitterHighlightsExtractor.from_url('https://x.com/example/highlights')
         target.initialize()
-        page = {'extractor': 'twitter:media', 'url': target.url, 'cursor': 'actual-remote-cursor', 'item': ''}
+        page = {'extractor': 'twitter:highlights', 'url': target.url, 'cursor': 'actual-remote-cursor', 'item': ''}
         producer, anchor = self.resumed(page)
         target.api._call = Mock(return_value={})
         original = target.api._call
         pagination.install(target, producer)
+        self.assertIsNone(getattr(target, '_native_listing', None))
         self.assertEqual(target._init_cursor(), 'actual-remote-cursor')
-        target.api._call('graphql/hash/UserMedia', {'variables': json.dumps({'cursor': target._init_cursor()})})
+        target.api._call('graphql/hash/UserHighlightsTweets', {'variables': json.dumps({'cursor': target._init_cursor()})})
         self.assertEqual(original.call_count, 1)
         self.assertEqual(producer.resume_cursor, anchor)
         target.api._call('graphql/hash/UserByScreenName', {'variables': '{}'})

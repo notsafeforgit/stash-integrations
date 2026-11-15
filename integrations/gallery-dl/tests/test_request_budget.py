@@ -26,7 +26,7 @@ class BudgetTests(unittest.TestCase):
         self.lease.stop = Mock()
         self.lease.stop.wait.return_value = False
         self.producer.scan_mode = 'routine'
-        permit = self.producer.request_source('https://x.com/i/api/graphql/hash/UserMedia')
+        permit = self.producer.request_source('https://x.com/i/api/graphql/hash/UserPhotoTimeline')
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]['request_uuid'], calls[1]['request_uuid'])
         self.assertEqual((calls[0]['class'], calls[0]['operation']), ('routine', 'listing'))
@@ -36,7 +36,7 @@ class BudgetTests(unittest.TestCase):
     def test_server_outage_pauses_without_making_a_source_request(self):
         self.lease.client._request = Mock(side_effect=Unavailable('offline'))
         with self.assertRaises(SourcePaused):
-            self.producer.request_source('https://x.com/i/api/graphql/hash/UserMedia')
+            self.producer.request_source('https://x.com/i/api/graphql/hash/UserPhotoTimeline')
         self.assertEqual(self.lease.failure, 'source_request_unavailable')
 
     def test_unavailable_profile_releases_turn_without_waiting_or_http(self):

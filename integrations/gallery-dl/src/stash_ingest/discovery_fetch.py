@@ -5,6 +5,7 @@ The caller owns durable delivery, cursor advancement and account/job scope.
 """
 
 import copy
+import json
 import re
 import sys
 import time
@@ -13,6 +14,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from . import metadata_fetch, reddit_api
 from .encoding import InvalidData, decode, encode
 from .metadata_bundle import Bundle, ERRORS as METADATA_ERRORS, MAX_BYTES, _native_size, public_url
+from .pagination import TWITTER_LISTINGS
 from .retention import POLICY
 
 SCHEMA = "stash-discovery-page-v1"
@@ -125,7 +127,7 @@ def collect(url, settings, cursor=None, *, factory=None, check=lambda: None, res
             raise metadata_fetch.SourceBusy()
         target = (factory or extractor.find)(request_url)
         if (target is None or target.category != platform
-                or type(target).subcategory != ("timeline" if platform == "twitter" else "user")):
+                or type(target).subcategory not in (("timeline", "tweets") if platform == "twitter" else ("user",))):
             return {"error": "unsupported_profile"}
         target.initialize()
         pause = util.build_duration_func(target.config("sleep-extractor"))
@@ -135,7 +137,31 @@ def collect(url, settings, cursor=None, *, factory=None, check=lambda: None, res
         result = {"schema": SCHEMA, "url": url, "retention_policy": POLICY,
                   "extractor_version": checkpoint_version, "cursor": cursor,
                   "next_cursor": None, "complete": False, "records": []}
-        if platform == "twitter":
+        if platform == "twitter" and type(target).subcategory == "tweets":
+            # Upstream now routes /timeline URLs to the posts timeline. The
+            # listing restores the configured timeline and its history search.
+            from . import twitter_listing
+            twitter_evidence(target)
+            try:
+                listing = twitter_listing.discovery(target, (cursor or {}).get("cursor", ""))
+            except InvalidData:
+                return {"error": "invalid_checkpoint"}
+            original_call, first = target.api._call, None
+
+            def call(endpoint, params, *args, **kwargs):
+                nonlocal first
+                if endpoint.rsplit("/", 1)[-1] in TWITTER_LISTINGS:
+                    page = listing.page(endpoint, json.loads(params.get("variables") or "{}"))
+                    if first is not None and page != first:
+                        # Stop before the following page; it is the next cursor.
+                        # A retry of the same request is still the first page.
+                        result["next_cursor"] = {"cursor": page}
+                        raise _PageComplete()
+                    first = page
+                return original_call(endpoint, params, *args, **kwargs)
+
+            target.api._call = call
+        elif platform == "twitter":
             twitter_evidence(target)
             original_update = target._update_cursor
 

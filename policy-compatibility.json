@@ -1,8 +1,8 @@
 {
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
-  "execution_contract": "stash-worker-execution-v9",
-  "implementation_sha256": "680e5602338ba31cee5b3176922a38240f2e6669de4dc68bbad02a8a57dccae5",
-  "decision": "compatible",
-  "reason": "Add stash-intake-folders --requeue-failed ERROR_CODE, which marks terminal folder-intake failures with that server error code for resubmission on later passes under the intake and backup locks. It makes no server request; resubmission uses the ordinary preview, admission and pending limit. Gallery workers, queued work, checkpoints and capture semantics are unchanged; execution v9 and capture v1 are unchanged."
+  "execution_contract": "stash-worker-execution-v10",
+  "implementation_sha256": "97a1612f2f434656f049673dc403c1d2ddce2d8ce4c57c0e146449c41429d7c2",
+  "decision": "contract-change",
+  "reason": "Execution v10 targets gallery-dl 1.32.20, which split the Twitter media tab into photo and video timelines and removed the timeline/search traversal. Media and posts listings use phased twitter-listing-v1 page checkpoints; routine checks stop each timeline at its own archived boundary. Full-history Twitter runs then search from:<account> below where every timeline was complete, stepping max_id until a search finds nothing. A removed include=timeline routes to its configured strategy and an empty profile route is rejected. Empty first-page checkpoints resume; old endpoint cursors restart that listing without routine boundaries. Deploy with explicit v9-to-v10 upgrades preserving pending windows, captures and archives; completed history is not reopened."
 }

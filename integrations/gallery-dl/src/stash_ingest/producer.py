@@ -82,6 +82,7 @@ class Producer:
         self.saved_pagination = self.pagination
         self.pagination_started = False
         self.pending_page = None
+        self.listing_restarted = False
         self.turn_replay = bool(self.resume_cursor)
         self.clock = clock
         self.resumed_work_deadline = None
@@ -334,6 +335,23 @@ class Producer:
     def _progress(self):
         extra = {} if self.pagination is None else {'pagination': dict(self.pagination)}
         self.lease.progress(self.items_seen, self.files_completed, self.last_cursor, **extra)
+
+    def restart_listing(self):
+        """Drop a page checkpoint the installed extractor can no longer address.
+
+        The listing restarts from its first page. Its saved item anchor may sit
+        in a different place in the new order, so no item is replayed as already
+        handled, and a routine check does not stop at an archived boundary:
+        posts the interrupted attempt had not reached may lie past one.
+        """
+        if self.pagination_started:
+            raise InvalidData('A started listing cannot restart its checkpoint')
+        self.saved_pagination = None
+        self.pagination = None
+        self.pending_page = None
+        self.resume_cursor = ''
+        self.turn_replay = False
+        self.listing_restarted = True
 
     def begin_page(self, page):
         """Checkpoint a page start before fetching it; never skip a partial page."""

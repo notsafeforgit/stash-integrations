@@ -7,7 +7,7 @@ def chronological(target, producer):
     if producer.scan_mode != 'routine':
         return False
     if target.category == 'twitter':
-        return target.subcategory in ('media', 'tweets', 'replies', 'timeline')
+        return target.subcategory in ('media', 'tweets')
     if target.category == 'reddit':
         return (target.subcategory in ('user', 'user-submitted', 'subreddit', 'subreddit-new', 'home-search', 'subreddit-search')
                 and parse_qs(urlsplit(target.url).query).get('sort', ['new'] if target.subcategory in ('user', 'user-submitted', 'subreddit-new') else []) == ['new'])
@@ -21,7 +21,7 @@ def chronological(target, producer):
     return False
 
 
-def posts(iterator, producer, category, *, resume_scope=True, manifest=None):
+def posts(iterator, producer, category, *, resume_scope=True, manifest=None, boundary=None):
     previous = None
     for entry in iterator:
         data = entry[0] if category == 'reddit' else entry
@@ -37,7 +37,8 @@ def posts(iterator, producer, category, *, resume_scope=True, manifest=None):
         pinned = data.get('stickied') or data.get('pinned') or data.get('_pinned')
         if category == 'instagram':
             pinned = pinned or data.get('timeline_pinned_user_ids') or data.get('clips_tab_pinned_user_ids')
-        replaying = (resume_scope and bool(producer.resume_cursor)) or producer.replay_archive
+        replaying = ((resume_scope and bool(producer.resume_cursor)) or producer.replay_archive
+                     or getattr(producer, 'listing_restarted', False))
         # A yielded post is consumed fully, with all media and external-host
         # children, before deciding to stop. Attachment counts are not posts.
         producer.routine_post_items = 0
@@ -46,6 +47,7 @@ def posts(iterator, producer, category, *, resume_scope=True, manifest=None):
         producer.routine_post_attachments = set()
         yield entry
         if (not pinned and not replaying and not getattr(producer, 'redgifs_history_expanding', False)
+                and (boundary is None or boundary(data))
                 and (not resume_scope or not producer.resume_cursor)
                 and (producer.routine_post_archived or
                      (producer.routine_post_items and not producer.routine_post_new
@@ -105,19 +107,41 @@ def configure(target, producer):
                 return False
             if producer.scan_mode == 'routine' and key == 'include' and not producer.resume_cursor and producer.saved_pagination is None:
                 return ('media',)
+            if key == 'include' and target.subcategory == 'user':
+                return twitter_include(target, original(key, default))
         return original(key, default)
 
     target.config = configuration
+
+
+def twitter_include(target, value):
+    """Route the removed `timeline` include to the timeline it used to read.
+
+    Saved worker policies can still name it. Full-history runs add the search
+    that this route used to perform; see twitter_listing.
+    """
+    if value.__class__ is str:
+        value = value.replace(' ', '').split(',')
+    if not isinstance(value, (list, tuple)) or 'timeline' not in value:
+        return value
+    from .twitter_listing import strategy
+    route = strategy(target)
+    result = []
+    for item in value:
+        item = route if item == 'timeline' else item
+        if item not in result:
+            result.append(item)
+    return tuple(result)
 
 
 def install(target, producer):
     if not chronological(target, producer):
         return
     if target.category == 'twitter':
-        # Direct UserMedia has no automatic search fall-through. A resumed
-        # legacy timeline keeps its original traversal until it completes.
-        original = target.tweets
-        target.tweets = lambda: posts(original(), producer, 'twitter')
+        # The Twitter listing applies this boundary to each timeline itself.
+        if getattr(target, '_native_listing', None) is None:
+            original = target.tweets
+            target.tweets = lambda: posts(original(), producer, 'twitter')
     elif target.category == 'instagram':
         original = target.posts
         saved = producer.saved_pagination
