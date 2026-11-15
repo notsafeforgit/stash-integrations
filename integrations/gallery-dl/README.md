@@ -52,6 +52,10 @@ It uses application authentication and native collection policies, retains exact
 admissions and directory cursors in one SQLite journal, and caps pending work
 across invocations. Service/timer templates are packaged but inactive; production
 folder coverage, policy activation and legacy scan retirement remain cutover work.
+A terminal failure is kept against the file version it observed, so an unchanged
+file is not retried. After a server-side fix, `stash-intake-folders --config ...
+--requeue-failed ERROR_CODE` (for example `file_changed`) marks those failures for
+resubmission; later passes submit them within the usual pending limit.
 
 `STASH_INGEST_TOKEN` is a token for Stash's ingestion API. The queue binds to a
 Stash HTTP origin and stable producer UUID, independently of that token. Rotating

@@ -10,7 +10,7 @@ from stash_ingest.client import Unavailable
 from stash_ingest.dedupe import exclusive_lock
 from stash_ingest.encoding import InvalidData, encode
 from stash_ingest.intake_client import includes, page, preview, scan_scope, status
-from stash_ingest.intake_folder import FORMAT, configuration, run
+from stash_ingest.intake_folder import FORMAT, configuration, requeue_failed, run
 from stash_ingest.intake_journal import Journal, database
 
 
@@ -117,9 +117,11 @@ class Server:
         result = self.jobs.get(request["request_uuid"])
         return status(deepcopy(result), request) if result else None
 
-    def finish(self, request_id, state="succeeded"):
+    def finish(self, request_id, state="succeeded", error_code=None):
         result = self.jobs[request_id]
         result.update(state=state, revision=result["revision"] + 1)
+        if error_code:
+            result["error_code"] = error_code
         if state == "succeeded":
             file_id = self.registered.setdefault(result["relative_path"], uid())
             result.update(media_ingested=True, registration_committed=True,
@@ -282,6 +284,38 @@ class FolderIntakeTests(unittest.TestCase):
             server.finish(server.applies[0]["request_uuid"], "failed")
             self.assertEqual({"failed": 1}, run(config, client=server, now=2000012000)["observed"])
             self.assertEqual(1, len(server.applies))
+
+    def test_requeue_resubmits_only_failures_with_the_selected_error_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = fixture(directory)
+            config["max_pending"] = 10
+            server = Server(config)
+            for name in ("changed.mp4", "review.mp4", "fine.mp4"):
+                server.add(name)
+            self.assertEqual(3, run(config, client=server, now=2000000000)["submitted"])
+            requests = {item["relative_path"]: item["request_uuid"] for item in server.applies}
+            server.finish(requests["changed.mp4"], "failed", "file_changed")
+            server.finish(requests["review.mp4"], "failed", "file_association_review")
+            server.finish(requests["fine.mp4"])
+            self.assertEqual({"failed": 2, "succeeded": 1}, run(config, client=server, now=2000004000)["observed"])
+            # An unchanged file version is never retried on its own.
+            self.assertEqual(0, run(config, client=server, now=2000008000)["submitted"])
+            with self.assertRaises(InvalidData):
+                requeue_failed(config, "File-Changed")
+            with exclusive_lock(config["library_lock"]):
+                with self.assertRaises(BlockingIOError):
+                    requeue_failed(config, "file_changed")
+            marked = requeue_failed(config, "file_changed")
+            self.assertEqual(1, marked["requeued"])
+            self.assertEqual({"failed": 1, "requeued": 1, "succeeded": 1}, marked["observed"])
+            self.assertEqual(0, requeue_failed(config, "file_changed")["requeued"])
+            self.assertEqual(3, len(server.applies), "requeue makes no server request")
+            result = run(config, client=server, now=2000012000)
+            self.assertEqual(1, result["submitted"])
+            self.assertEqual("changed.mp4", server.applies[-1]["relative_path"])
+            server.finish(server.applies[-1]["request_uuid"])
+            self.assertEqual({"failed": 1, "succeeded": 2}, run(config, client=server, now=2000016000)["observed"])
+            self.assertEqual(4, len(server.applies))
 
     def test_nested_collection_wins_and_source_scope_is_excluded(self):
         with tempfile.TemporaryDirectory() as directory:

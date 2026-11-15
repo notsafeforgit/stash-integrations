@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -162,12 +163,28 @@ def run(value, *, client=None, now=None):
         return {**journal.summary(), "visited": visited, "submitted": submitted, "scope_exclusions": exclusions}
 
 
+def requeue_failed(value, error_code):
+    """Mark terminal failures with this error code for resubmission; no server request."""
+    value = configuration(value)
+    if not isinstance(error_code, str) or not re.fullmatch(r"[a-z][a-z_]{0,63}", error_code):
+        raise InvalidData("Requeue requires a server error code such as file_changed")
+    state, _ = private_directory(value["state_dir"])
+    # The journal is part of the backup capture boundary, like an ordinary pass.
+    with exclusive_lock(state / "intake.lock"), exclusive_lock(value["library_lock"]):
+        journal = Journal(state, value)
+        requeued = journal.requeue_failed(error_code)
+        return {**journal.summary(), "requeued": requeued}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Discover local media in reviewed collections and resume native file imports")
     parser.add_argument("--config", required=True)
+    parser.add_argument("--requeue-failed", metavar="ERROR_CODE",
+                        help="Resubmit terminal failures with this server error code on later passes, then exit")
     args = parser.parse_args(argv)
     try:
-        result = run(decode(read_regular(args.config, 4 << 20), 4 << 20))
+        value = decode(read_regular(args.config, 4 << 20), 4 << 20)
+        result = run(value) if args.requeue_failed is None else requeue_failed(value, args.requeue_failed)
     except BlockingIOError:
         result = {"skipped": True, "reason": "busy"}
     except (InvalidData, Unavailable, UnicodeError) as error:

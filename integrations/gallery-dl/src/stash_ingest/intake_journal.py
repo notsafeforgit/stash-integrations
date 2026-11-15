@@ -14,6 +14,8 @@ from .intake_client import LIMIT, TERMINAL, file_input, fingerprint, includes, p
 
 JOURNAL_NAME = "intake.sqlite3"
 APPLICATION_ID = 0x5344494E
+# Never equal to an encoded file fingerprint, so a requeued path is admitted again.
+REQUEUED_VERSION = b""
 
 
 @contextmanager
@@ -150,6 +152,30 @@ class Journal:
                            (preview["collection_uuid"], preview["relative_path"], fingerprint(preview), "already_indexed"))
                 return True
         return False
+
+    def requeue_failed(self, error_code):
+        """Admit terminal failures with this server error code again on later passes.
+
+        A failure is retained against the file version it observed, so an
+        unchanged file is never retried. After a server-side fix, mark those
+        versions for resubmission; the next traversal previews and submits each
+        one within the usual pending limit. Other outcomes are unchanged.
+        """
+        with database(self.directory) as db:
+            latest = {}
+            for row in db.execute("SELECT collection,path,result FROM requests WHERE terminal=1 ORDER BY rowid"):
+                latest[(row["collection"], row["path"])] = row["result"]
+            count = 0
+            for row in db.execute("SELECT collection,path FROM observed WHERE disposition='failed'").fetchall():
+                result = latest.get((row["collection"], row["path"]))
+                if result is None:
+                    continue
+                value = decode(result, LIMIT)
+                if value.get("state") == "failed" and value.get("error_code") == error_code:
+                    db.execute("UPDATE observed SET version=?,disposition='requeued' WHERE collection=? AND path=?",
+                               (REQUEUED_VERSION, row["collection"], row["path"]))
+                    count += 1
+        return count
 
     def begin_cycle(self, now):
         with database(self.directory) as db:
