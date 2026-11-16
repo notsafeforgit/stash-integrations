@@ -9,7 +9,7 @@ from .album_client import integer, sha256
 from .application_key import application_key
 from .backfill_import import ImportClient
 from .catalog_source import source_time
-from .client import Unavailable
+from .client import UNAVAILABLE_STATUSES, Unavailable
 from .encoding import InvalidData, decode, encode, identifier
 
 LIMIT = 16384
@@ -122,6 +122,8 @@ class DeduplicationClient(ImportClient):
                 return decode(response.read(LIMIT + 1), LIMIT)
         except HTTPError as error:
             try:
+                if error.code in UNAVAILABLE_STATUSES:
+                    raise Unavailable("stash_unavailable", error.code)
                 if (error.headers.get_content_type() != "application/json"
                         or error.headers.get("Content-Encoding") is not None):
                     raise Unavailable("deduplication_request_rejected", error.code)

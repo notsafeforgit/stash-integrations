@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v10",
-  "implementation_sha256": "97a1612f2f434656f049673dc403c1d2ddce2d8ce4c57c0e146449c41429d7c2",
-  "decision": "contract-change",
-  "reason": "Execution v10 targets gallery-dl 1.32.20, which split the Twitter media tab into photo and video timelines and removed the timeline/search traversal. Media and posts listings use phased twitter-listing-v1 page checkpoints; routine checks stop each timeline at its own archived boundary. Full-history Twitter runs then search from:<account> below where every timeline was complete, stepping max_id until a search finds nothing. A removed include=timeline routes to its configured strategy and an empty profile route is rejected. Empty first-page checkpoints resume; old endpoint cursors restart that listing without routine boundaries. Deploy with explicit v9-to-v10 upgrades preserving pending windows, captures and archives; completed history is not reopened."
+  "implementation_sha256": "f326c8bc196e2f639ae6dc6dddddb38da5018202a6f4bb25bce95dd11ee330fe",
+  "decision": "compatible",
+  "reason": "Folder intake and host dedupe treat Stash being unreachable, a dropped connection or a 502/503/504 as stash_unavailable: the scheduled stash-intake-folders and stash-dedupe-host commands report a skipped run and keep their journals for the next run instead of failing. Other HTTP errors keep their rejection codes. Gallery workers, queued work, checkpoints and capture semantics are unchanged; execution v10 and capture v1 are unchanged."
 }

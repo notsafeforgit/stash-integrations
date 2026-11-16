@@ -56,6 +56,11 @@ A terminal failure is kept against the file version it observed, so an unchanged
 file is not retried. After a server-side fix, `stash-intake-folders --config ...
 --requeue-failed ERROR_CODE` (for example `file_changed`) marks those failures for
 resubmission; later passes submit them within the usual pending limit.
+While Stash is restarting or unreachable (no connection, a dropped one, or a
+502/503/504), `stash-intake-folders` and `stash-dedupe-host` print
+`{"skipped": true, "reason": "stash_unavailable"}` (or `network_unavailable`) and
+exit 0. Their journals keep pending requests for the next run. Other HTTP errors
+still fail with their rejection codes.
 
 `STASH_INGEST_TOKEN` is a token for Stash's ingestion API. The queue binds to a
 Stash HTTP origin and stable producer UUID, independently of that token. Rotating

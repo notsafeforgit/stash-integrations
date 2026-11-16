@@ -21,6 +21,17 @@ class Unavailable(RuntimeError):
         self.code, self.status, self.retry_after = code, status, retry_after
 
 
+# Stash restarting or briefly unreachable: no connection, a dropped one, or a
+# 502/503/504. Saved requests stay pending and the next scheduled run resumes
+# them, so scheduled commands report a skipped run instead of a failure.
+STASH_UNAVAILABLE = frozenset({"network_unavailable", "stash_unavailable"})
+UNAVAILABLE_STATUSES = frozenset({502, 503, 504})
+
+
+def stash_unavailable(error):
+    return isinstance(error, Unavailable) and error.code in STASH_UNAVAILABLE
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None

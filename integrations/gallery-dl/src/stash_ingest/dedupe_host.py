@@ -12,7 +12,7 @@ import time
 
 from .catalog_snapshot import sync_directory
 from .catalog_upload import read_regular
-from .client import Unavailable
+from .client import Unavailable, stash_unavailable
 from .dedupe import Journal, exclusive_lock, private_directory, run
 from .encoding import InvalidData, decode, identifier
 from .endpoint import origin
@@ -130,6 +130,11 @@ def main(argv=None):
     except BlockingIOError:
         result = {"skipped": True, "reason": "busy"}
     except (InvalidData, Unavailable, UnicodeError) as error:
+        if stash_unavailable(error):
+            # The journal keeps pending requests for stash-dedupe-resume and
+            # the completion timestamp is unchanged.
+            print(json.dumps({"skipped": True, "reason": error.code}, sort_keys=True))
+            return 0
         print(str(error), file=sys.stderr)
         return 1
     except (OSError, sqlite3.Error):

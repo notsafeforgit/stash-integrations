@@ -10,7 +10,7 @@ import time
 
 from .album_client import integer
 from .catalog_upload import read_regular
-from .client import Unavailable
+from .client import Unavailable, stash_unavailable
 from .dedupe import exclusive_lock, private_directory
 from .dedupe_host import absolute
 from .encoding import InvalidData, decode, identifier
@@ -188,6 +188,10 @@ def main(argv=None):
     except BlockingIOError:
         result = {"skipped": True, "reason": "busy"}
     except (InvalidData, Unavailable, UnicodeError) as error:
+        if stash_unavailable(error):
+            # Discovery and pending requests are retained for the next run.
+            print(json.dumps({"skipped": True, "reason": error.code}, sort_keys=True))
+            return 0
         print(str(error), file=sys.stderr)
         return 1
     except (OSError, sqlite3.Error):
