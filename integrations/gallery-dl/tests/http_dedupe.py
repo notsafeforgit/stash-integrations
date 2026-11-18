@@ -37,7 +37,10 @@ def run(setup):
     with redirect_stdout(output), redirect_stderr(errors):
         code = main(arguments)
     if setup["phase"] == "lost-response":
-        assert code == 1 and "network_unavailable" in errors.getvalue(), (code, output.getvalue(), errors.getvalue())
+        # A dropped Stash connection is a skipped run; the journal keeps the
+        # request for the next invocation.
+        assert code == 0 and not errors.getvalue(), (code, output.getvalue(), errors.getvalue())
+        assert json.loads(output.getvalue()) == {"reason": "network_unavailable", "skipped": True}, output.getvalue()
         assert Journal.has_active(directory / "state")
         assert not (media / "duplicate.mp4").exists()
         assert (media / "third.mp4").exists()
