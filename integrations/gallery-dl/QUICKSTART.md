@@ -2,8 +2,8 @@
 
 Use `stash-gallery` to download into your Stash library with source posts,
 captured metadata, account review and source albums. It is an optional worker
-you run alongside Stash. It does not require n8n, a plugin, S3, old catalogs or
-the original deployment's scripts.
+you run alongside Stash. It does not require n8n, a plugin, S3 or the original
+deployment's scripts.
 
 The worker uses the existing Stash ingestion API and durable producer queue.
 Stash owns metadata, associations, permissions and file verification; gallery-dl

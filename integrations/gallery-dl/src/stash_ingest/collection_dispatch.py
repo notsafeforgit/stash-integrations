@@ -23,14 +23,9 @@ def migrate(db):
 
 
 class CollectionDispatcher:
-    pause_after_traversal = False
     table = "enrichment_collection_dispatch"
     protocol = "enrichment_collections_protocol"
     protocol_error = "native_enrichment_collections_unavailable"
-
-    @staticmethod
-    def make_client(transport):
-        return EnrichmentClient(transport)
 
     def ready(self, after):
         rows = {}
@@ -46,7 +41,7 @@ class CollectionDispatcher:
         if (box.endpoint, box.producer) != (transport.endpoint, transport.producer):
             raise Conflict("Collection dispatcher and outbox identify different producers")
         self.box, self.transport, self.configuration = box, transport, configuration
-        self.client, self.policy = self.make_client(transport), configuration.policy_sha256
+        self.client, self.policy = EnrichmentClient(transport), configuration.policy_sha256
         if not sha256(self.policy):
             raise InvalidData("Collection discovery requires a reviewed policy")
         with box.transaction():
@@ -108,7 +103,7 @@ class CollectionDispatcher:
             # absent. Start again without an idle delay on the next pass.
             waiting |= bool(previous)
             if not self.save(state, after_collection="", failures=0, error_code=None,
-                             available_at=0 if waiting and not self.pause_after_traversal else self.box.clock() + 30):
+                             available_at=0 if waiting else self.box.clock() + 30):
                 return {"state": "contended"}
             return {"state": "waiting" if waiting else "idle"}
         except (Unavailable, InvalidData, Capacity) as error:

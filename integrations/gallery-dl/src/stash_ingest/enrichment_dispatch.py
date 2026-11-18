@@ -1,4 +1,4 @@
-"""Bounded enrichment admission and execution with restart-safe discovery."""
+"""Bounded enrichment admission and execution with restart-safe progress."""
 
 from .client import Unavailable
 from .dispatch_retention import DISPATCH_LIMIT, DispatchCapacity, initial_revision, reclaim_idle
@@ -29,14 +29,8 @@ def migrate(db):
 
 class EnrichmentDispatcher:
     table = "enrichment_dispatch"
-    client_type = EnrichmentClient
-    journal_type = EnrichmentJournal
     protocol = "enrichment_dispatch_protocol"
     cursor_fields = ("delivery_after", "local_after", "job_after", "target_cursor")
-
-    @staticmethod
-    def execute_job(*args):
-        return execute(*args)
 
     def __init__(self, box, transport, collection, configuration=None):
         if (box.endpoint, box.producer) != (transport.endpoint, transport.producer):
@@ -45,7 +39,7 @@ class EnrichmentDispatcher:
         if not sha256(policy):
             raise InvalidData("Enrichment dispatch requires a reviewed policy")
         self.box, self.transport, self.configuration = box, transport, configuration
-        self.client, self.journal = self.client_type(transport), self.journal_type(box)
+        self.client, self.journal = EnrichmentClient(transport), EnrichmentJournal(box)
         self.key = identifier(collection), policy
         with box.transaction():
             if self.state() is None:
@@ -100,7 +94,7 @@ class EnrichmentDispatcher:
                 "next_attempt_at": state["available_at"]}
 
     def _execute(self, state, job, configuration):
-        result = self.execute_job(self.box, self.transport, configuration, job)
+        result = execute(self.box, self.transport, configuration, job)
         if result["state"] == "delivery_pending":
             result["dispatch"] = self.unavailable(state, Unavailable("native_delivery_unavailable"))
         elif not self.save(state, failures=0, available_at=0, error_code=None):
@@ -196,10 +190,9 @@ class EnrichmentDispatcher:
             if not self.configuration.accepts(target["url"]):
                 continue
             try:
-                if self.client_type is EnrichmentClient:
-                    reused = self.client.reuse(target['uuid'], target['revision'])
-                    if reused is not None:
-                        return {'state': 'reused', 'target_uuid': target['uuid'], 'completion_uuid': reused['uuid']}
+                reused = self.client.reuse(target['uuid'], target['revision'])
+                if reused is not None:
+                    return {'state': 'reused', 'target_uuid': target['uuid'], 'completion_uuid': reused['uuid']}
                 job = self.client.admit(target["uuid"], target["revision"], self.key[1], self.configuration.extractor_version)
             except Unavailable as error:
                 if error.status == 409:

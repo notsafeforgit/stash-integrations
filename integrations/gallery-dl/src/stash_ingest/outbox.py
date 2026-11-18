@@ -18,7 +18,7 @@ from .encoding import InvalidData, MAX_BATCH_BYTES, decode, digest, encode, iden
 from .endpoint import origin
 
 APPLICATION_ID = 0x5354494F  # STIO, not a Stash or gallery-dl archive database.
-SCHEMA = 25
+SCHEMA = 26
 
 
 def is_contention(error):
@@ -186,23 +186,6 @@ class Outbox:
         if version < 10:
             from .collection_dispatch import migrate
             migrate(self.db)
-        if version < 11:
-            from .discovery_journal import migrate
-            migrate(self.db)
-        if version < 12:
-            from .discovery_dispatch import migrate
-            migrate(self.db)
-        if version < 13:
-            from .discovery_collection_dispatch import migrate
-            migrate(self.db)
-        if version < 14:
-            from .discovery_detail_journal import migrate
-            migrate(self.db)
-            from .discovery_detail_dispatch import migrate
-            migrate(self.db)
-        if version < 15:
-            from .discovery_detail_dispatch import migrate_candidates
-            migrate_candidates(self.db)
         # Version 16 admits attachment lifecycle reports. Older binaries must
         # reject the queue rather than silently leave the new event kind behind.
         if version < 17:
@@ -226,6 +209,11 @@ class Outbox:
             migrate(self.db)
         if version < 24:
             from .outbox_history import migrate
+            migrate(self.db)
+        # Version 26 retires the discovery archive. Discovery rows that still own
+        # local bytes make this migration refuse before any table changes.
+        if version < 26:
+            from .discovery_retirement import migrate
             migrate(self.db)
         self.db.execute(f"PRAGMA user_version={SCHEMA}")
 
@@ -291,10 +279,7 @@ class Outbox:
     def metadata_reserved_bytes(self):
         # Call inside the same transaction as capacity admission. Reservations
         # cover bytes that an in-flight extractor can still return after a crash.
-        return self.db.execute("""SELECT
-            (SELECT coalesce(sum(reserved_bytes),0) FROM enrichment_executions) +
-            (SELECT coalesce(sum(reserved_bytes),0) FROM discovery_executions) +
-            (SELECT coalesce(sum(reserved_bytes),0) FROM discovery_detail_executions)""").fetchone()[0]
+        return self.db.execute("SELECT coalesce(sum(reserved_bytes),0) FROM enrichment_executions").fetchone()[0]
 
     def enqueue(self, body):
         try:

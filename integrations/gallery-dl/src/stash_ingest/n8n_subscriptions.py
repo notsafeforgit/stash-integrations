@@ -1,7 +1,7 @@
 """n8n source operations using Stash subscriptions as the sole target list."""
 
 from . import source_accounts, source_management, source_policy, subscription_management as subscriptions
-from .catalog_upload import read_regular
+from .filesystem import read_regular
 from .encoding import InvalidData, digest, identifier
 
 

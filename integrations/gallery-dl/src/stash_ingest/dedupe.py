@@ -13,13 +13,11 @@ import sys
 import tempfile
 import uuid
 
-from .catalog_snapshot import sync_directory
-from .catalog_source import source_time
-from .catalog_upload import read_regular
+from .filesystem import read_regular, sync_directory
 from .client import Unavailable
 from .dedupe_candidates import MAX_PAIRS, MAX_REPORT_BYTES, candidates_from_report, check_directory, directory_identity, discover, validate_review
 from .dedupe_client import BLOCKED, LIMIT, REJECTIONS, DeduplicationClient, validate_pair, validate_preview, validate_receipt, validate_request
-from .encoding import InvalidData, decode, digest, encode, identifier, utc_now
+from .encoding import InvalidData, decode, digest, encode, identifier, utc_now, source_time
 from .publication_lock import PublicationBarrier
 
 FORMAT = "stash-file-deduplication-v2"

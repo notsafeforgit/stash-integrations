@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v10",
-  "implementation_sha256": "f326c8bc196e2f639ae6dc6dddddb38da5018202a6f4bb25bce95dd11ee330fe",
+  "implementation_sha256": "5c93280f2b0addd1ab6f9593aa97f49dbef672f2c0945b40473cd64c988f5b1f",
   "decision": "compatible",
-  "reason": "Folder intake and host dedupe treat Stash being unreachable, a dropped connection or a 502/503/504 as stash_unavailable: the scheduled stash-intake-folders and stash-dedupe-host commands report a skipped run and keep their journals for the next run instead of failing. Other HTTP errors keep their rejection codes. Gallery workers, queued work, checkpoints and capture semantics are unchanged; execution v10 and capture v1 are unchanged."
+  "reason": "Release 0.6.51 removes the discovery account-listing and candidate-detail operations, their dispatch and journals, and checkpoint handoff admission, which native schema 1000142 retires. Download and post.enrich admissions, coverage, cursors, captures and retained outputs are unchanged, so queued work keeps its meaning; profiles naming the removed operations are rejected. Execution v10 and capture v1 are unchanged."
 }

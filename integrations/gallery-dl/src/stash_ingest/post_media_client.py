@@ -9,9 +9,8 @@ import uuid
 
 from .album_client import integer, sha256
 from .backfill_import import ImportClient
-from .catalog_source import source_time
 from .client import Unavailable
-from .encoding import InvalidData, decode, encode, identifier
+from .encoding import InvalidData, decode, encode, identifier, source_time
 from .post_identity import current_post
 
 POLICY = "catalog-files-v1"

@@ -9,15 +9,13 @@ import re
 import sys
 import uuid
 
-from .activation_client import ActivationClient, integer, sha256
-from .catalog_source import source_time
-from .catalog_upload import read_regular
+from .management_client import ManagementClient, integer, sha256
 from .client import Client, Unavailable
 from .collections import lookup_collections, target_url
 from .config_migration import publish_profile
-from .encoding import InvalidData, decode, digest, encode, identifier
+from .encoding import InvalidData, decode, digest, encode, identifier, source_time
 from .endpoint import origin
-from .filesystem import destination_lock
+from .filesystem import destination_lock, read_regular
 from .publication_lock import publication_lock
 
 FORMAT = "stash-source-management-v1"
@@ -104,7 +102,7 @@ def conflict():
     return Unavailable("source_definition_changed", 409)
 
 
-class SourceManagementClient(ActivationClient):
+class SourceManagementClient(ManagementClient):
     kind = "source_management"
     max_http_bytes = MAX_BYTES
 

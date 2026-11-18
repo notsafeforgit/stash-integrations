@@ -6,7 +6,6 @@
     "integrations/archive/",
     "integrations/library/",
     "scripts/verify_producer_install.py",
-    "scripts/backfill_catalog_associations.py",
     "scripts/split_worker_profiles.py"
   ],
   "fixtures": "pkg/ contains versioned test fixtures only; the canonical schema and APIs remain in Stash.",

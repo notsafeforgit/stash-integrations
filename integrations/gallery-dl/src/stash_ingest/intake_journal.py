@@ -8,7 +8,7 @@ import stat
 import tempfile
 import uuid
 
-from .catalog_snapshot import sync_directory
+from .filesystem import sync_directory
 from .encoding import InvalidData, decode, encode
 from .intake_client import LIMIT, TERMINAL, file_input, fingerprint, includes, preview as validate_preview, saved_request, status
 

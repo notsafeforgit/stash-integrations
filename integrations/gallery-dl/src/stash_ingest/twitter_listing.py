@@ -290,18 +290,3 @@ def configure(target):
         return original(key, default)
 
     target.config = configuration
-
-
-def discovery(target, cursor):
-    """A full account listing for metadata discovery, one checkpointed page at a time."""
-    route = strategy(target)
-    phases = {'media': ('photos', 'videos'), 'tweets': ('posts',)}.get(route)
-    if phases is None:
-        raise InvalidData('Unsupported Twitter discovery strategy')
-    phases += ('search-all',) if target.config('text-tweets', False) else SEARCHES
-    listing = Listing(target, phases, resume=cursor)
-    configure(target)
-    target._native_listing = listing
-    target._init_cursor = listing.init_cursor
-    target.tweets = listing.tweets
-    return listing

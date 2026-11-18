@@ -100,7 +100,7 @@ def inspect(queue, library, endpoint, *, keep_days=1, now=None):
     now = time.time() if now is None else now
     cutoff = now - keep_days * 86400
     if (queue.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
-            or queue.execute("PRAGMA user_version").fetchone()[0] not in range(16, 26)):
+            or queue.execute("PRAGMA user_version").fetchone()[0] not in range(16, 27)):
         raise InvalidData("Unsupported producer history version")
     binding = queue.execute("SELECT endpoint,producer FROM binding WHERE id=1").fetchone()
     if binding is None or origin(binding["endpoint"]) != origin(endpoint):

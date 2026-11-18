@@ -6,16 +6,8 @@ import re
 from .backfill_calls import BackfillCalls, advance_once
 from .client import Unavailable, drain_once
 from .collection_dispatch import CollectionDispatcher
-from .configuration import Configuration, _json_file, _path
+from .configuration import _json_file, _path
 from .profile_dispatch import ProfileDispatcher
-from .discovery_collection_dispatch import DiscoveryCollectionDispatcher
-from .discovery_configuration import DiscoveryConfiguration
-from .discovery_journal import DiscoveryJournal
-from .discovery_worker import execute as deliver_discovery
-from .discovery_detail_configuration import DiscoveryDetailConfiguration
-from .discovery_detail_dispatch import DiscoveryDetailCollectionDispatcher
-from .discovery_detail_journal import DiscoveryDetailJournal
-from .discovery_detail_worker import execute as deliver_detail
 from .encoding import InvalidData, identifier
 from .enrichment_configuration import EnrichmentConfiguration
 from .enrichment_journal import EnrichmentJournal
@@ -43,7 +35,7 @@ class Profiles:
                     or set(entry) - {"id", "operation", "profile", "priority"}
                     or type(entry.get('priority', 0)) is not int or not 0 <= entry.get('priority', 0) <= 2
                     or not isinstance(entry["id"], str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", entry["id"])
-                    or entry["id"] in seen or entry["operation"] not in ("download", "post.enrich", "account.list_page", "post.verify_candidate")):
+                    or entry["id"] in seen or entry["operation"] not in ("download", "post.enrich")):
                 raise InvalidData("Invalid or repeated worker profile entry")
             seen.add(entry["id"])
             self.entries.append({**entry, "profile": _path(entry["profile"], filename.parent)})
@@ -67,43 +59,38 @@ class WorkerDispatcher:
     def save(self, state, **changes):
         value = {**state, **changes}
         with self.box.transaction():
-            changed = self.box.db.execute("""UPDATE worker_dispatch SET after_entry=?,enrichment_delivery_after=?,discovery_delivery_after=?,discovery_detail_delivery_after=?,revision=revision+1
-                WHERE uuid=? AND revision=?""", (value["after_entry"], value["enrichment_delivery_after"], value["discovery_delivery_after"],
-                    value["discovery_detail_delivery_after"], self.profiles.uuid, state["revision"])).rowcount
+            changed = self.box.db.execute("""UPDATE worker_dispatch SET after_entry=?,enrichment_delivery_after=?,revision=revision+1
+                WHERE uuid=? AND revision=?""", (value["after_entry"], value["enrichment_delivery_after"],
+                    self.profiles.uuid, state["revision"])).rowcount
         if changed:
             state.update(changes, revision=state["revision"] + 1)
         return bool(changed)
 
-    def recover_delivery(self, state, kind):
+    def recover_delivery(self, state):
         # Delivery does not require a current website profile, active collection
-        # definition or new discovery grant. The server authenticates the saved
+        # definition or new metadata grant. The server authenticates the saved
         # job's historical scope when receiving its exact pending operation.
-        cursor = kind + "_delivery_after"
-        table, deliver = {"enrichment": ("enrichment_executions", deliver_enrichment),
-                          "discovery": ("discovery_executions", deliver_discovery),
-                          "discovery_detail": ("discovery_detail_executions", deliver_detail)}[kind]
+        cursor = "enrichment_delivery_after"
         if state[cursor]:
             identifier(state[cursor])
-        # Listing/detail jobs can finish natively after losing a local lease.
-        # Their saved execution must observe that outcome even without a body.
-        pending = "AND json_type(state,'$.pending')='object'" if kind == 'enrichment' else ''
-        query = f"""SELECT job_uuid FROM {table} WHERE phase='active'
-            {pending} AND job_uuid>? ORDER BY job_uuid LIMIT 1"""
+        # Finished native jobs can leave an unsent publication, failure or checkpoint.
+        # The saved execution must observe that outcome even without a current lease.
+        query = """SELECT job_uuid FROM enrichment_executions WHERE phase='active'
+            AND json_type(state,'$.pending')='object' AND job_uuid>? ORDER BY job_uuid LIMIT 1"""
         row = self.box.db.execute(query, (state[cursor],)).fetchone()
         if row is None and state[cursor]:
             row = self.box.db.execute(query, ("",)).fetchone()
         if not self.save(state, **{cursor: row["job_uuid"] if row else ""}):
             return {"state": "contended"}
-        return deliver(self.box, self.transport, None, row["job_uuid"]) if row else {"state": "idle"}
+        return deliver_enrichment(self.box, self.transport, None, row["job_uuid"]) if row else {"state": "idle"}
 
     def once(self):
         state = self.state()
         deliveries = {}
-        for kind in ("enrichment", "discovery", "discovery_detail"):
-            delivery = self.recover_delivery(state, kind)
-            deliveries[kind + "_delivery"] = delivery
-            if delivery["state"] == "contended":
-                return {"state": "contended", **deliveries}
+        delivery = self.recover_delivery(state)
+        deliveries["enrichment_delivery"] = delivery
+        if delivery["state"] == "contended":
+            return {"state": "contended", **deliveries}
         entries = self.profiles.entries
         names = [entry["id"] for entry in entries]
         start = names.index(state["after_entry"]) + 1 if state["after_entry"] in names else 0
@@ -120,12 +107,8 @@ class WorkerDispatcher:
             try:
                 if entry["operation"] == "download":
                     result = ProfileDispatcher(self.box, self.transport, entry["profile"]).once()
-                elif entry["operation"] == "post.enrich":
-                    result = CollectionDispatcher(self.box, self.transport, EnrichmentConfiguration(entry["profile"])).once()
-                elif entry["operation"] == "account.list_page":
-                    result = DiscoveryCollectionDispatcher(self.box, self.transport, DiscoveryConfiguration(entry["profile"])).once()
                 else:
-                    result = DiscoveryDetailCollectionDispatcher(self.box, self.transport, DiscoveryDetailConfiguration(entry["profile"])).once()
+                    result = CollectionDispatcher(self.box, self.transport, EnrichmentConfiguration(entry["profile"])).once()
             except DispatchCapacity as error:
                 result = error.result()
             except Capacity:
@@ -155,8 +138,6 @@ def dispatch_all(box, client, profiles):
     return {**result, "scheduling": scheduling, "scheduled_calls": schedules.summary(), "delivery": delivery, "backfill": backfill, "resolution": resolution, "submission": submission,
             "outbox": box.status(), "source_requests": requests.status(), "source_calls": calls.summary(),
             "backfill_calls": backfills.summary(), "enrichment": EnrichmentJournal(box).summary(),
-            "discovery": DiscoveryJournal(box).summary(),
-            "discovery_detail": DiscoveryDetailJournal(box).summary(),
             "intake_completion": "inspect_native_receipts"}
 
 

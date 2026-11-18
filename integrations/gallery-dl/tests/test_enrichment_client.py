@@ -34,6 +34,17 @@ class EnrichmentClientTests(unittest.TestCase):
             "sha256": hashlib.sha256(checkpoint_bytes(self.body)).hexdigest(),
             "record_count": 3, "pending_count": 1, "unresolved_count": 1}
 
+    def test_retired_checkpoint_handoffs_are_not_admitted_as_retained_work(self):
+        # Handoff jobs and their seed endpoint were removed with native schema 1000142.
+        version_two = dict(self.job, arguments={**self.job["arguments"], "version": 2,
+            "capture_policy": "source-retention-v1+capture-context-v1"})
+        self.client._job(version_two)
+        handoff = {"uuid": str(uuid.uuid4()), "plan_sha256": "b" * 64, "seed_sha256": "c" * 64}
+        with self.assertRaises(Unavailable):
+            self.client._job(dict(version_two, arguments={**version_two["arguments"], "handoff": handoff}))
+        self.assertFalse(hasattr(EnrichmentClient, "seed"))
+        self.assertFalse(hasattr(EnrichmentClient, "admit_handoff"))
+
     def test_repeated_restarts_keep_jobs_and_failure_receipts_readable(self):
         self.job.update(fence=12, failures=1)
         self.client._job(self.job)
@@ -62,35 +73,6 @@ class EnrichmentClientTests(unittest.TestCase):
         for limit in (0, True, MAX_RESPONSE + 1):
             with self.assertRaises(InvalidData):
                 actual._request("GET", "/capabilities", max_response_bytes=limit)
-
-    def test_retained_seed_pins_original_identity_and_rejects_replaced_bytes(self):
-        body = deepcopy(self.body)
-        record = body["records"][0]
-        record.update(kind="context", observed_at=None, base=None, parent=None, retained_capture=str(uuid.uuid4()))
-        record["patch"]["precise_source_id"] = 9007199254740993
-        body.update(schema="stash-metadata-fetch-v2", records=[record], pending=[], unresolved=[])
-        sha = hashlib.sha256(checkpoint_bytes(body)).hexdigest()
-        handoff = {"uuid": str(uuid.uuid4()), "plan_sha256": "b" * 64, "seed_sha256": sha}
-        self.job["arguments"].update(version=2, capture_policy=CAPTURE_POLICY, handoff=handoff)
-        response = {"handoff_uuid": handoff["uuid"], "plan_sha256": handoff["plan_sha256"], "sha256": sha, "body": body}
-        self.transport._request.return_value = response
-        self.assertEqual(self.client.seed(self.job, body["url"]), body)
-        self.assertTrue(self.transport._request.call_args.kwargs["preserve_numbers"])
-        self.assertEqual(self.transport._request.call_args.kwargs["max_response_bytes"], MAX_RESPONSE)
-        for key, value in (("handoff_uuid", str(uuid.uuid4())), ("plan_sha256", "c" * 64), ("sha256", "d" * 64)):
-            self.transport._request.return_value = dict(response, **{key: value})
-            with self.assertRaises(Unavailable):
-                self.client.seed(self.job, body["url"])
-        changed = deepcopy(body)
-        changed["records"][0]["patch"]["precise_source_id"] = 9007199254740992
-        self.transport._request.return_value = dict(response, body=changed)
-        with self.assertRaises(Unavailable):
-            self.client.seed(self.job, body["url"])
-        for mutation in ({"capture_policy": "unknown"}, {"handoff": None}, {"version": 1}, {"version": True}):
-            changed = deepcopy(self.job)
-            changed["arguments"].update(mutation)
-            with self.assertRaises(Unavailable):
-                self.client._job(changed)
 
     def test_candidate_scope_duplicate_and_invalid_target_rejected(self):
         collection = self.job["arguments"]["collection_uuid"]

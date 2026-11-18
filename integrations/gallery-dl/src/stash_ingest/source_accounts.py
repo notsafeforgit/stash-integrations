@@ -2,7 +2,7 @@
 
 from urllib.parse import urlencode
 
-from .activation_client import integer
+from .management_client import integer
 from .client import Unavailable
 from .encoding import InvalidData, identifier
 from .source_lists import account as list_account, key

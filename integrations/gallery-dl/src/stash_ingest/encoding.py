@@ -62,6 +62,17 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def source_time(value):
+    """Return an RFC 3339 time with an explicit offset; never infer a local zone."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})", value):
+        raise InvalidData("Source time must have an explicit UTC offset")
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        raise InvalidData("Invalid source time") from None
+    return value
+
+
 def timestamp(value):
     if isinstance(value, datetime):
         # gallery-dl uses naive UTC datetimes in several extractors.

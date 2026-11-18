@@ -2,10 +2,9 @@
 
 from copy import deepcopy
 
-from .activation_client import ActivationClient, integer
-from .catalog_source import source_time
+from .management_client import ManagementClient, integer
 from .client import Unavailable
-from .encoding import InvalidData, encode, identifier
+from .encoding import InvalidData, encode, identifier, source_time
 from .source_management import conflict, text, validate_plan
 
 MAX_BYTES = 2 << 20
@@ -76,7 +75,7 @@ def mutation(value):
     return value
 
 
-class SourcePolicyClient(ActivationClient):
+class SourcePolicyClient(ManagementClient):
     kind = "source_policy"
     max_http_bytes = MAX_BYTES
 

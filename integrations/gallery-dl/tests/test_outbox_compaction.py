@@ -176,6 +176,6 @@ class AcknowledgementCompactionTests(HistoryFixture):
         self.box.close()
         self.box = Outbox(self.path, 'http://localhost:8009', PRODUCER)
         self.assertEqual(self.box.db.execute('SELECT receipt FROM events').fetchone()[0], before)
-        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 25)
+        self.assertEqual(self.box.db.execute('PRAGMA user_version').fetchone()[0], 26)
         with patch('stash_ingest.outbox.SCHEMA', 24), self.assertRaisesRegex(InvalidData, 'Unsupported'):
             Outbox(self.path, 'http://localhost:8009', PRODUCER, create=False)

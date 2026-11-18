@@ -194,17 +194,11 @@ class EnrichmentClient:
             raise Unavailable("invalid_response")
         try:
             if work["version"] == 1:
-                if "capture_policy" in work or "handoff" in work:
+                if "capture_policy" in work:
                     raise InvalidData("V1 execution cannot reuse a retained checkpoint")
-            else:
-                if work.get("capture_policy") != CAPTURE_POLICY:
-                    raise InvalidData("Unknown enrichment capture policy")
-                if "handoff" in work:
-                    handoff = work["handoff"]
-                    if (not isinstance(handoff, dict) or set(handoff) != {"uuid", "plan_sha256", "seed_sha256"}
-                            or not sha256(handoff["plan_sha256"]) or not sha256(handoff["seed_sha256"])):
-                        raise InvalidData("Invalid retained checkpoint identity")
-                    identifier(handoff["uuid"])
+            elif work.get("capture_policy") != CAPTURE_POLICY or "handoff" in work:
+                # Checkpoint handoffs were retired; the native server no longer admits them.
+                raise InvalidData("Unknown enrichment capture policy")
             identifier(value.get("uuid"))
             for key in ("target_uuid", "post_uuid", "collection_uuid"):
                 identifier(work.get(key))
@@ -239,39 +233,6 @@ class EnrichmentClient:
         except InvalidData:
             raise Unavailable("invalid_response") from None
         return value
-
-    def admit_handoff(self, handoff, plan, policy, extractor):
-        if not sha256(plan) or not sha256(policy) or not isinstance(extractor, str) or not extractor:
-            raise InvalidData("Invalid checkpoint handoff admission")
-        value = self.client._request("POST", PREFIX + "/handoffs/" + identifier(handoff) + "/jobs", encode({
-            "expected_plan_sha256": plan, "policy_sha256": policy, "extractor_version": extractor}))
-        work = self._job(value)
-        if (work.get("handoff", {}).get("uuid") != handoff or work["handoff"]["plan_sha256"] != plan
-                or work["policy_sha256"] != policy or work["extractor_version"] != extractor):
-            raise Unavailable("invalid_response")
-        return value
-
-    def seed(self, job, url):
-        work = self._job(job)
-        handoff = work.get("handoff")
-        if handoff is None:
-            return None
-        value = self.client._request("GET", self.path(job["uuid"], "/seed"), max_response_bytes=MAX_RESPONSE,
-                                     preserve_numbers=True)
-        if (not isinstance(value, dict) or set(value) != {"handoff_uuid", "plan_sha256", "sha256", "body"}
-                or value["handoff_uuid"] != handoff["uuid"] or value["plan_sha256"] != handoff["plan_sha256"]
-                or value["sha256"] != handoff["seed_sha256"] or not isinstance(value["body"], dict)):
-            raise Unavailable("invalid_response")
-        try:
-            body = Bundle(url, work["extractor_version"], value["body"]).checkpoint()
-            raw = checkpoint_bytes(body)
-        except InvalidData:
-            raise Unavailable("invalid_response") from None
-        if (body["schema"] != RETAINED_SCHEMA or not body["records"]
-                or any(not record.get("retained_capture") for record in body["records"])
-                or hashlib.sha256(raw).hexdigest() != handoff["seed_sha256"]):
-            raise Unavailable("invalid_response")
-        return body
 
     @staticmethod
     def _seconds(seconds):

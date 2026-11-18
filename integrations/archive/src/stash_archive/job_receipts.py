@@ -6,6 +6,7 @@ deadlines are never renewed, reset or interpreted as current ownership.
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import math
 import re
 
 from .receipts import checked_json, identifier, objects
@@ -13,10 +14,12 @@ from .storage import InvalidArchive, json_bytes
 
 MAX_BODY = 32 << 20
 MAX_STATE = 64 << 10
+# Producer schema 26 drops the discovery journals; their native jobs were deleted by migration 1000142.
+DISCOVERY_RETIRED = 26
 FAMILIES = (
-    ("enrichment", 8, "post.enrich", "enrichment_job_attempts"),
-    ("discovery", 11, "account.list_page", "discovery_job_attempts"),
-    ("discovery_detail", 14, "post.verify_candidate", "discovery_detail_attempts"),
+    ("enrichment", 8, math.inf, "post.enrich", "enrichment_job_attempts"),
+    ("discovery", 11, DISCOVERY_RETIRED, "account.list_page", "discovery_job_attempts"),
+    ("discovery_detail", 14, DISCOVERY_RETIRED, "post.verify_candidate", "discovery_detail_attempts"),
 )
 STAMP = re.compile(r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})?\Z")
 
@@ -183,10 +186,10 @@ def definition(db, family, row, value):
 
 def verify_job_journals(db, queue, producer, version):
     reports = {}
-    for family, introduced, kind, attempts in FAMILIES:
+    for family, introduced, retired, kind, attempts in FAMILIES:
         table = family + "_executions"
         exists = queue.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?", (table,)).fetchone() is not None
-        if exists != (version >= introduced):
+        if exists != (introduced <= version < retired):
             raise InvalidArchive("Producer schema version would omit or invent a retained job journal")
         counts = {k:0 for k in ("active", "review", "completed", "failed", "pending_bodies", "checkpoints", "completions", "failures",
                                "accepted_pending_bodies", "superseded_pending_bodies")}

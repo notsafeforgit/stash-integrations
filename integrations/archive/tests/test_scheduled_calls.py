@@ -6,7 +6,7 @@ from stash_ingest.outbox import Outbox
 from stash_ingest.scheduled_calls import ScheduledCalls
 from stash_archive.bundle import export_archive, import_archive
 from stash_archive.storage import InvalidArchive
-from test_receipts import ReceiptFixture, ORIGIN, PRODUCER, MEDIA_ROOT
+from test_receipts import ReceiptFixture, ORIGIN, PRODUCER, MEDIA_ROOT, retain_discovery_journals
 
 
 class ScheduledArchiveTests(ReceiptFixture):
@@ -46,6 +46,7 @@ class ScheduledArchiveTests(ReceiptFixture):
 
     def test_schema_nineteen_remains_valid_and_cannot_omit_new_pending_requests(self):
         self.record()
+        retain_discovery_journals(self.box.db)
         self.box.db.execute('PRAGMA user_version=19')
         with self.assertRaisesRegex(InvalidArchive, 'scheduling intents'):
             self.verify()

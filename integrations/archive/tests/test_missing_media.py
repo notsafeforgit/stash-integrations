@@ -6,7 +6,7 @@ from stash_ingest import missing_media
 from stash_ingest.outbox import Outbox
 from stash_archive.bundle import export_archive, import_archive
 from stash_archive.storage import InvalidArchive
-from test_receipts import ReceiptFixture, ORIGIN, PRODUCER
+from test_receipts import ReceiptFixture, ORIGIN, PRODUCER, retain_discovery_journals
 
 
 class MissingMediaArchiveTests(unittest.TestCase):
@@ -40,14 +40,16 @@ class MissingMediaArchiveTests(unittest.TestCase):
         del current['producers'][0]['counts']['retired']
         self.box.db.execute('DROP TABLE scheduled_calls')
         self.box.db.execute('DROP TABLE missing_media')
+        retain_discovery_journals(self.box.db)
         self.box.db.execute('PRAGMA user_version=18')
         self.assertEqual(self.verify(), current)
-        self.box.db.execute('PRAGMA user_version=26')
+        self.box.db.execute('PRAGMA user_version=27')
         with self.assertRaisesRegex(InvalidArchive, 'Unsupported producer'):
             self.verify()
 
     def test_downgrade_or_missing_table_cannot_hide_decisions(self):
         self.remember()
+        retain_discovery_journals(self.box.db)
         self.box.db.execute('PRAGMA user_version=18')
         with self.assertRaisesRegex(InvalidArchive, 'missing-media decisions'):
             self.verify()

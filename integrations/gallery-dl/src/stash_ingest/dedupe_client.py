@@ -8,9 +8,8 @@ from urllib.request import Request
 from .album_client import integer, sha256
 from .application_key import application_key
 from .backfill_import import ImportClient
-from .catalog_source import source_time
 from .client import UNAVAILABLE_STATUSES, Unavailable
-from .encoding import InvalidData, decode, encode, identifier
+from .encoding import InvalidData, decode, encode, identifier, source_time
 
 LIMIT = 16384
 MEDIA_POLICY = "earliest-fill-blanks-v1"

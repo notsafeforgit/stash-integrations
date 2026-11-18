@@ -12,10 +12,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from .backfill_import import ImportClient
-from .catalog_source import source_time
-from .catalog_upload import read_regular
+from .filesystem import read_regular
 from .client import Unavailable
-from .encoding import InvalidData, decode, digest, encode, identifier, native_json
+from .encoding import InvalidData, decode, digest, encode, identifier, native_json, source_time
 
 
 LIMIT = 1 << 20

@@ -236,26 +236,6 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual([r[1] for r in self.requests], [reddit_api.REST + '/comments/abc123/.json',
                          reddit_api.REST + '/api/v1/access_token', 'https://oauth.reddit.com/comments/abc123/.json'])
 
-    def test_discovery_fallback_preserves_saved_cursor_and_one_page_boundary(self):
-        from stash_ingest.discovery_fetch import collect
-        url = 'https://www.reddit.com/user/example/submitted/?sort=new'
-        page_response = response({'data': {'children': [{'kind': 't3',
-            'data': post(author_fullname='t2_fixture')}], 'after': 't3_abc123'}})
-        values = [response({'data': {'name': 'example', 'id': 'fixture'}}), blocked(),
-                  response({'access_token': 'fixture-token'}), page_response]
-        page = collect(url, self.settings, {'after': 't3_prior'}, factory=lambda u: self.target(
-            values, url=u, install=False, native=False))
-        self.assertNotIn('error', page)
-        self.assertFalse(page['complete'])
-        self.assertEqual(page['cursor'], {'after': 't3_prior'})
-        self.assertEqual(page['next_cursor'], {'after': 't3_abc123'})
-        self.assertEqual([r[1] for r in self.requests], [reddit_api.REST + '/user/example/about.json',
-            reddit_api.REST + '/user/example/submitted/.json', reddit_api.REST + '/api/v1/access_token',
-            'https://oauth.reddit.com/user/example/submitted/.json'])
-        self.assertEqual(self.requests[1][2]['params'], self.requests[3][2]['params'])
-        self.assertEqual(self.requests[3][2]['params']['after'], 't3_prior')
-        self.assertEqual([r['kind'] for r in page['records']], ['post', 'media'])
-
     def test_isolated_metadata_process_reports_each_attempt_and_keeps_oauth_429(self):
         url = 'https://www.reddit.com/comments/abc123/'
         class Budget:

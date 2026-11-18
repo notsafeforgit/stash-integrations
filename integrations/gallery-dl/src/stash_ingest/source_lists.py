@@ -5,7 +5,7 @@ from pathlib import Path
 import stat
 import tempfile
 
-from .catalog_upload import read_regular
+from .filesystem import read_regular
 from .encoding import InvalidData, digest
 from .launcher_inputs import _REDDIT_USER, reddit_name, twitter_target
 from .source_management import conflict

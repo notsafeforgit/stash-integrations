@@ -50,15 +50,10 @@ def _result(journal, job, state):
 
 def execute(box, transport, configuration, job_uuid, *, fetcher=fetch):
     """configuration=None delivers persisted intents but never claims/fetches."""
-    return execute_metadata(box, transport, configuration, job_uuid, EnrichmentJournal, EnrichmentClient, fetcher=fetcher)
-
-
-def execute_metadata(box, transport, configuration, job_uuid, journal_type, client_type, *, fetcher):
-    """Share ownership and durable delivery, with kind-specific receipt validation."""
     identifier(job_uuid)
     if (box.endpoint, box.producer) != (transport.endpoint, transport.producer):
         raise Conflict("Enrichment client and outbox identify different producers")
-    journal, client = journal_type(box), client_type(transport)
+    journal, client = EnrichmentJournal(box), EnrichmentClient(transport)
     with journal.execution() as owned:
         if not owned:
             return _result(journal, job_uuid, "waiting")
@@ -87,7 +82,7 @@ def execute_metadata(box, transport, configuration, job_uuid, journal_type, clie
                 _configuration(configuration, current["job"], definition["url"])
             value = journal.prepare(current)
             job = current["job"]
-            if (client_type is EnrichmentClient and configuration is not None and value.body is None
+            if (configuration is not None and value.body is None
                     and value.state['pending'] is None and job['state'] in ('queued', 'cancelled')):
                 reused = client.reuse(definition['arguments']['target_uuid'], definition['arguments']['target_revision'])
                 if reused is not None:
@@ -153,7 +148,7 @@ def execute_metadata(box, transport, configuration, job_uuid, journal_type, clie
 
             checkpoint_version = job["arguments"]["extractor_version"]
             head = client.head(job_uuid, value.definition["url"], checkpoint_version)
-            resume = head["body"] if head else client.seed(lease.job, value.definition["url"])
+            resume = head["body"] if head else None
             if head is not None and head["pending_count"] == 0:
                 value = journal.intent(value, lease.job, journal.completion_intent, {"receipt": {k: v for k, v in head.items() if k != "body"}})
             else:
@@ -166,7 +161,7 @@ def execute_metadata(box, transport, configuration, job_uuid, journal_type, clie
                 options = {} if checkpoint_version == configuration.extractor_version else {"checkpoint_version": checkpoint_version}
                 result = fetcher(value.definition["url"], configuration.settings(), **options,
                                  resume=resume, check=check,
-                                 reserve_source=MetadataBudget(lease) if client_type is EnrichmentClient else lease.reserve_source)
+                                 reserve_source=MetadataBudget(lease))
                 if (isinstance(result, dict) and set(result) == {"error"}
                         and isinstance(result["error"], str) and result["error"] in ERRORS):
                     value = journal.intent(value, lease.job, "failure", {"error_code": result["error"]})

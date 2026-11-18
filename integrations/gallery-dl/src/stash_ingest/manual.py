@@ -11,7 +11,7 @@ import time
 import uuid
 
 from . import source_management, source_policy, windows
-from .catalog_upload import read_regular
+from .filesystem import read_regular
 from .cli import worker_output
 from .client import Client, Unavailable, drain_once
 from .collections import lookup_collections, target_url

@@ -12,6 +12,26 @@ from .encoding import InvalidData
 from .publication_lock import PublicationBusy
 
 
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def read_regular(path, limit):
+    """Read a bounded regular file without following a substituted link."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise InvalidData("Input must be a regular file")
+        body = source.read(limit + 1)
+    if len(body) > limit:
+        raise InvalidData("Input exceeds its size limit")
+    return body
+
+
 class Directory(ABC):
     """Confined file operations with deployment-specific root verification."""
 

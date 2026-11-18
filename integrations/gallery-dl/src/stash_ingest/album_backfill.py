@@ -11,11 +11,9 @@ import tempfile
 import uuid
 
 from .album_client import AlbumClient, MAX_POSTS, MAX_PREVIEW_BYTES, POLICIES, integer, sha256, validate_preview, validate_publication
-from .catalog_snapshot import sync_directory
-from .catalog_source import source_time
-from .catalog_upload import read_regular
+from .filesystem import read_regular, sync_directory
 from .client import Unavailable
-from .encoding import InvalidData, decode, digest, encode, identifier, utc_now
+from .encoding import InvalidData, decode, digest, encode, identifier, utc_now, source_time
 from .endpoint import origin
 
 FORMAT = "stash-album-backfill-plan-v1"

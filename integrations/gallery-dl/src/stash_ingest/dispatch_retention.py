@@ -34,9 +34,7 @@ def reclaim_idle(box, table, journal_table, policy):
     collection with unfinished local work. An expired, empty cursor has no
     remaining progress to lose. Native ready queries rediscover its work.
     """
-    if (table, journal_table) not in (
-            ("enrichment_dispatch", "enrichment_executions"),
-            ("discovery_detail_dispatch", "discovery_detail_executions")):
+    if (table, journal_table) != ("enrichment_dispatch", "enrichment_executions"):
         raise InvalidData("Unknown metadata dispatch cache")
     return box.db.execute(f"""DELETE FROM {table} WHERE rowid IN (
         SELECT d.rowid FROM {table} d

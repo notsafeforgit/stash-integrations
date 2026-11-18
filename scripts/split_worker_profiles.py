@@ -25,7 +25,7 @@ def split_profiles(filename, *, lane="all", initial_profiles=()):
     groups, seen = {}, set()
     for entry in document["profiles"]:
         if (set(entry) != {"id", "operation", "profile"} or entry["id"] in seen
-                or entry["operation"] not in {"download", "post.enrich", "account.list_page", "post.verify_candidate"}):
+                or entry["operation"] not in {"download", "post.enrich"}):
             raise ValueError("Invalid worker dispatch entry")
         seen.add(entry["id"])
         profile = json.loads((filename.parent / entry["profile"]).read_text())

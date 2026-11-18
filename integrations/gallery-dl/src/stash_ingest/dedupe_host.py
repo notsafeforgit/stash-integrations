@@ -10,8 +10,7 @@ import sys
 import tempfile
 import time
 
-from .catalog_snapshot import sync_directory
-from .catalog_upload import read_regular
+from .filesystem import read_regular, sync_directory
 from .client import Unavailable, stash_unavailable
 from .dedupe import Journal, exclusive_lock, private_directory, run
 from .encoding import InvalidData, decode, identifier

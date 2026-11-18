@@ -79,6 +79,14 @@ class WorkerDispatchTests(unittest.TestCase):
     def open(self):
         return Outbox(self.path, self.transport.endpoint, PRODUCER, clock=lambda: self.now)
 
+    def test_retired_discovery_operations_are_rejected_by_worker_profiles(self):
+        for operation in ("account.list_page", "post.verify_candidate"):
+            with self.subTest(operation=operation):
+                document = {**self.document, "profiles": [{"id": "retired", "operation": operation, "profile": "retired.json"}]}
+                self.profile_path.write_bytes(encode(document))
+                with self.assertRaises(InvalidData):
+                    Profiles(self.profile_path)
+
     def test_profile_list_is_bounded_unique_and_paths_are_local(self):
         self.assertEqual(self.profiles.entries[0]["profile"], self.directory / "download.json")
         self.assertFalse((self.directory / "download.json").exists(), "loading the list does not load website settings")

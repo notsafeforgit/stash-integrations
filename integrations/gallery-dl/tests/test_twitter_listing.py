@@ -8,7 +8,6 @@ from gallery_dl.extractor import twitter
 from gallery_dl.extractor.twitter import TwitterAPI, TwitterExtractor
 
 from stash_ingest import pagination, twitter_listing
-from stash_ingest.discovery_fetch import collect
 from stash_ingest.encoding import InvalidData
 from stash_ingest.producer import Producer
 from stash_ingest.source_window import SourceWindow
@@ -304,52 +303,6 @@ class TwitterListingTests(unittest.TestCase):
         config.set(('extractor', 'twitter'), 'timeline', {'strategy': 'unknown'})
         with self.assertRaises(InvalidData):
             twitter_include(parent, ['timeline'])
-
-
-class TwitterDiscoveryTests(unittest.TestCase):
-    def setUp(self):
-        list(extractor.extractors())
-        self.addCleanup(config.clear)
-
-    def collect(self, server, cursor=None, settings=None):
-        def user_id(api, handle):
-            api.extractor._user, api.extractor._user_obj = {'name': 'example', 'id': '99'}, {}
-            return '99'
-        with patch.object(TwitterAPI, '_call', side_effect=server), patch.object(TwitterAPI, '_user_id', user_id), \
-                patch.object(TwitterExtractor, 'login'), patch.object(TwitterExtractor, 'metadata', return_value={}):
-            return collect('https://x.com/id:99/timeline', settings or {}, cursor)
-
-    def pages(self, server, settings=None):
-        cursor, pages = None, []
-        for _ in range(8):
-            page = self.collect(server, cursor, settings)
-            self.assertNotIn('error', page)
-            pages.append(page)
-            if page['complete']:
-                return pages
-            cursor = page['next_cursor']
-        self.fail('Discovery did not complete')
-
-    def test_discovery_reads_one_listing_page_and_resumes_through_history_search(self):
-        # Discovery lists text posts and reposts, so the removed timeline's
-        # automatic strategy read the posts timeline and unfiltered search.
-        server = Server({
-            ('UserOriginalsTimeline', None, None): response([tweet(50), tweet(40)], 'p2'),
-            ('UserOriginalsTimeline', None, 'p2'): response([tweet(30)]),
-            ('SearchTimeline', f'from:example max_id:{tid(30)}', None): response([tweet(5)], search=True),
-        })
-        pages = self.pages(server)
-        phases = ('posts', 'search-all')
-        self.assertEqual([len([r for r in p['records'] if r['kind'] == 'post']) for p in pages], [2, 1, 1, 0])
-        self.assertEqual(decode(pages[0]['next_cursor']['cursor'], phases)['cursor'], 'p2')
-        self.assertEqual(decode(pages[1]['next_cursor']['cursor'], phases)['bound'], int(tid(30)))
-        self.assertEqual(server.calls, [
-            ('UserOriginalsTimeline', None, None), ('UserOriginalsTimeline', None, 'p2'),
-            ('SearchTimeline', f'from:example max_id:{tid(30)}', None),
-            ('SearchTimeline', f'from:example max_id:{int(tid(5)) - 1}', None)])
-
-    def test_discovery_rejects_a_removed_timeline_cursor(self):
-        self.assertEqual(self.collect(Server({}), {'cursor': '1/saved'}), {'error': 'invalid_checkpoint'})
 
 
 if __name__ == '__main__':

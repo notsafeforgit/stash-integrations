@@ -43,7 +43,7 @@ class SiteWorkerProfilesTests(unittest.TestCase):
             root = Path(directory)
             entries = []
             for site in ("reddit", "twitter"):
-                for operation in ("download", "post.enrich", "account.list_page", "post.verify_candidate"):
+                for operation in ("download", "post.enrich"):
                     name = site + "-" + operation
                     (root / (name + ".json")).write_text(json.dumps({"source_category": site}))
                     entries.append({"id": name, "operation": operation, "profile": name + ".json"})

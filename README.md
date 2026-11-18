@@ -230,3 +230,13 @@ actual native publication; failed and cancelled attempts remain failed locally.
 Accepted checkpoints are verified, and unsent bodies or reservations are kept.
 Reconciliation and cursor retirement commit atomically. The existing scheduled
 maintenance entrypoint can run this without website requests or new backups.
+
+Release v0.6.51 retires the frozen catalog, automation and discovery import
+workflows with native schema 1000142. Their commands and worker discovery
+operations are removed; the producer rejects `account.list_page` and
+`post.verify_candidate` profiles. Producer outbox schema 26 drops the discovery
+journal and dispatch tables after verifying that no discovery execution is still
+active, in review, or holds local bytes. Execution contract v10 and capture v1 are
+unchanged. Deploy the Stash server, the native archive reader and every
+shared-outbox client together with writers stopped; the migration is explicit and
+transactional.

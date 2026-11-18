@@ -15,10 +15,8 @@ from .outbox import Capacity, Conflict, LeaseLost
 STATE_LIMIT = 64 << 10
 
 
-def migrate(db, name="enrichment"):
-    if name not in ("enrichment", "discovery_detail"):
-        raise InvalidData("Unknown metadata delivery journal")
-    db.execute(f"""CREATE TABLE {name}_executions(
+def migrate(db):
+    db.execute(f"""CREATE TABLE enrichment_executions(
         job_uuid TEXT PRIMARY KEY, definition BLOB NOT NULL, definition_sha256 TEXT NOT NULL,
         revision INTEGER NOT NULL CHECK(revision>0),
         phase TEXT NOT NULL CHECK(phase IN ('active','review','completed','failed')),
@@ -30,11 +28,11 @@ def migrate(db, name="enrichment"):
         CHECK(reserved_bytes>=coalesce(length(body),0)),
         CHECK(phase NOT IN ('completed','failed') OR (body IS NULL AND reserved_bytes=0))
     )""")
-    db.execute(f"CREATE INDEX {name}_local_phase ON {name}_executions(phase,updated_at,job_uuid)")
-    db.execute(f"""CREATE TRIGGER {name}_definition_immutable
-        BEFORE UPDATE OF job_uuid,definition,definition_sha256 ON {name}_executions
+    db.execute("CREATE INDEX enrichment_local_phase ON enrichment_executions(phase,updated_at,job_uuid)")
+    db.execute("""CREATE TRIGGER enrichment_definition_immutable
+        BEFORE UPDATE OF job_uuid,definition,definition_sha256 ON enrichment_executions
         BEGIN SELECT RAISE(ABORT,'enrichment definitions are immutable'); END""")
-    db.execute(f"""CREATE TRIGGER {name}_local_completed BEFORE UPDATE ON {name}_executions
+    db.execute("""CREATE TRIGGER enrichment_local_completed BEFORE UPDATE ON enrichment_executions
         WHEN OLD.phase='completed'
         BEGIN SELECT RAISE(ABORT,'completed enrichment acknowledgements are immutable'); END""")
 
@@ -53,7 +51,6 @@ class Execution:
 class EnrichmentJournal:
     table = "enrichment_executions"
     lock_name = "enrichment"
-    client_type = EnrichmentClient
     completion_field = "publication"
     completion_intent = "publish"
 
@@ -167,13 +164,13 @@ class EnrichmentJournal:
             raise Conflict("Enrichment capacity must be reserved before use")
         if selected == "completed":
             completed = decode(state, STATE_LIMIT)
-            if self.client_type is EnrichmentClient and 'reuse_completion' in completed:
+            if 'reuse_completion' in completed:
                 work = value.definition['arguments']
-                self.client_type.reuse_receipt(completed['reuse_completion'], work['target_uuid'], work['target_revision'])
+                EnrichmentClient.reuse_receipt(completed['reuse_completion'], work['target_uuid'], work['target_revision'])
                 if data is not None or completed['pending'] is not None:
                     raise Conflict('Captured reuse cannot discard pending source evidence')
             else:
-                self.client_type._completion(completed.get(self.completion_field), value.job_uuid, work=value.definition["arguments"])
+                EnrichmentClient._completion(completed.get(self.completion_field), value.job_uuid, work=value.definition["arguments"])
         current = self.find(value.job_uuid)
         if current is None or current.revision != value.revision or current.phase == "completed":
             raise Conflict("Enrichment execution changed")
@@ -199,7 +196,7 @@ class EnrichmentJournal:
         return self.find(value.job_uuid)
 
     def claim(self, value, job):
-        self.client_type._job(job, value.job_uuid)
+        EnrichmentClient._job(job, value.job_uuid)
         if job["arguments"] != value.definition["arguments"]:
             raise Conflict("Enrichment job changed its immutable definition")
         prior = value.state["claim"]
@@ -220,7 +217,7 @@ class EnrichmentJournal:
             raise Conflict("Enrichment extraction did not reserve its checkpoint")
         body = Bundle(value.definition["url"], value.definition["arguments"]["extractor_version"], body).checkpoint()
         raw = checkpoint_bytes(body)
-        pending = {"kind": "checkpoint", "lease": self.client_type.lease(lease), "expected_revision": expected, "sha256": digest(raw)}
+        pending = {"kind": "checkpoint", "lease": EnrichmentClient.lease(lease), "expected_revision": expected, "sha256": digest(raw)}
         return self.change(value, state={**value.state, "pending": pending}, body=raw, reserved=len(raw))
 
     def intent(self, value, lease, kind, payload):
@@ -229,13 +226,13 @@ class EnrichmentJournal:
         if kind == self.completion_intent:
             if set(payload) != {"receipt"}:
                 raise InvalidData("Invalid enrichment publication intent")
-            self.client_type._receipt(payload["receipt"], value.job_uuid)
+            EnrichmentClient._receipt(payload["receipt"], value.job_uuid)
             if payload["receipt"]["pending_count"]:
                 raise Conflict("Pending children cannot be published")
         elif (set(payload) != {"error_code"} or not isinstance(payload["error_code"], str)
               or payload["error_code"] not in ERRORS | {"post_identity_conflict"}):
             raise InvalidData("Invalid enrichment failure intent")
-        pending = {"kind": kind, "lease": self.client_type.lease(lease), **payload}
+        pending = {"kind": kind, "lease": EnrichmentClient.lease(lease), **payload}
         return self.change(value, state={**value.state, "pending": pending}, reserved=0)
 
     def acknowledged(self, value, receipt):
@@ -245,7 +242,7 @@ class EnrichmentJournal:
         state = {**value.state, "pending": None, "error_code": ""}
         phase = value.phase
         if pending["kind"] == "checkpoint":
-            self.client_type._receipt(receipt, value.job_uuid)
+            EnrichmentClient._receipt(receipt, value.job_uuid)
             body = decode(value.body, MAX_BYTES, preserve_numbers=True)
             if (receipt["sha256"] != pending["sha256"] or receipt["fence"] > pending["lease"]["fence"]
                     or receipt["revision"] > pending["expected_revision"] + 1
@@ -262,7 +259,7 @@ class EnrichmentJournal:
             else:
                 state["pending"] = {"kind": self.completion_intent, "lease": pending["lease"], "receipt": receipt}
         elif pending["kind"] == self.completion_intent:
-            self.client_type._completion(receipt, value.job_uuid, work=value.definition["arguments"],
+            EnrichmentClient._completion(receipt, value.job_uuid, work=value.definition["arguments"],
                                          receipt=pending["receipt"], lease=pending["lease"])
             state[self.completion_field], phase = receipt, "completed"
         else:

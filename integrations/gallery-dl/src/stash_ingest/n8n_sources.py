@@ -9,7 +9,7 @@ import re
 import sys
 
 from . import backfills, source_accounts, source_lists, source_management, source_policy
-from .catalog_upload import read_regular
+from .filesystem import read_regular
 from .client import Client, Unavailable
 from .encoding import InvalidData, decode, digest, encode, identifier
 from .endpoint import origin

@@ -48,10 +48,7 @@ def inventory(directories):
     # A dispatcher may reference a profile outside its own directory. Missing
     # or malformed references must not be mistaken for a retired policy.
     from .worker_dispatch import Profiles, SCHEMA as DISPATCH_SCHEMA
-    from .discovery_configuration import SCHEMA as DISCOVERY_SCHEMA
-    from .discovery_detail_configuration import SCHEMA as DETAIL_SCHEMA
-    known = {SCHEMA, DISPATCH_SCHEMA, DISCOVERY_SCHEMA, DETAIL_SCHEMA,
-             WORKER_SCHEMA, LAYERED_SCHEMA, STORAGE_SCHEMA, STORAGE_LAYERED_SCHEMA}
+    known = {SCHEMA, DISPATCH_SCHEMA, WORKER_SCHEMA, LAYERED_SCHEMA, STORAGE_SCHEMA, STORAGE_LAYERED_SCHEMA}
     for path, value in list(documents.items()):
         # Plain gallery-dl layers may live beside their wrapper profiles. They
         # do not independently configure metadata workers, but remain inventoried.

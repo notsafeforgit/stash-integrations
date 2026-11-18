@@ -18,8 +18,8 @@ def compact(box, library, *, keep_days=1, now=None, apply=False, batch_size=BATC
             or type(batch_size) is not int or not 1 <= batch_size <= BATCH):
         raise InvalidData("Invalid acknowledgement retention interval or batch size")
     if (not library.in_transaction or library.execute("PRAGMA query_only").fetchone()[0] != 1
-            or box.db.execute("PRAGMA user_version").fetchone()[0] not in ((25,) if apply else (24, 25))):
-        raise InvalidData("Compaction requires producer schema 25 and a held read-only native snapshot")
+            or box.db.execute("PRAGMA user_version").fetchone()[0] not in ((25, 26) if apply else (24, 25, 26))):
+        raise InvalidData("Compaction requires a supported producer schema and a held read-only native snapshot")
     if (library.execute("SELECT lineage FROM native_schema WHERE singleton=1").fetchone()[0]
             != "org.notsafeforgit.stash.native-archive"
             or not library.execute("SELECT 1 FROM ingest_producers WHERE uuid=?", (box.producer,)).fetchone()):

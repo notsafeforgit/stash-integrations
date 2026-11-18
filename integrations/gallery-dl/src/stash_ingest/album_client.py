@@ -8,9 +8,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from .backfill_import import ImportClient
-from .catalog_source import source_time
 from .client import Unavailable
-from .encoding import InvalidData, decode, encode, identifier
+from .encoding import InvalidData, decode, encode, identifier, source_time
 from .post_identity import current_post
 
 POLICIES = ("source-identifiers-v1", "legacy-reddit-filename-v1", "legacy-twitter-filename-v1", "linked-post-media-v1")

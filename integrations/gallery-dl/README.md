@@ -1070,6 +1070,19 @@ pages. A failed migration rolls back. Older producer code refuses the new schema
 it; preserve the queue in backups rather than recreating it during rollback.
 This does not change the Stash database schema.
 
+Producer outbox schema 26 (this release) drops the discovery execution and
+dispatch journal tables (`discovery_executions`, `discovery_detail_executions`,
+`discovery_dispatch`, `discovery_collection_dispatch`, `discovery_detail_dispatch`
+and `discovery_detail_collection_dispatch`) and the discovery delivery columns of
+`worker_dispatch`. The migration is transactional. It refuses to run, leaving the
+outbox unchanged with a clear error, while any retained discovery execution is
+active or in review, or holds an unacknowledged body or reserved bytes. Completed
+and failed discovery rows without bodies are dropped. Deploy this release together
+with the Stash server containing native schema 1000142. That server deletes the
+discovery archive jobs, so an outbox still at schema 25 with discovery history must
+be upgraded first; its completed and failed discovery rows reference jobs the
+server no longer has.
+
 ## Manual downloads
 
 `stash-gallery-dl` accepts one to fifty HTTP URLs, including `ytdl:`-prefixed
@@ -1318,7 +1331,7 @@ is no command-line token argument.
 | `queue-run --collection UUID --revision N --profile FILE --until TIME [--retrieval-url URL]` | Records/coalesces a download request using the profile digest; low-level callers may use `--policy SHA256` instead |
 | `submit-runs` | Submits one ready request; exits 2 while requests remain pending, in flight or in review |
 | `dispatch --profile FILE` | Resolves/delivers/submits queued work and discovers at most one source attempt; retains pagination and backoff |
-| `dispatch-all --profiles FILE` | Delivers saved work and rotates across local download, enrichment and account-listing profiles and permitted collections |
+| `dispatch-all --profiles FILE` | Delivers saved work and rotates across local download and enrichment profiles and permitted collections |
 | `runs-status [--intent UUID \| --ticket UUID] [--after N]` | Local request counts and up to 50 relevant historical submissions |
 | `ticket-status UUID` | Checks the ticket's original source windows; exits 0 only for `source_succeeded`, otherwise 2 |
 | `retry-run-request UUID` | Retries a reviewed submission with the original UUID and bytes |
@@ -1468,828 +1481,14 @@ Development rehearsals use isolated roots and do not authorize production worker
 activation. Manual/orphan checkpoints, historical handoffs and completion hashes
 remain evidence; this command creates no historical lease or completion proof.
 
-## Frozen catalog registry import
-
-`stash-import-catalog-identities` imports saved performer UUIDs, local bindings,
-merge history and explicit account choices from a frozen registry. After that
-reviewed import, `stash-import-catalog-registry` imports the complementary account
-identifiers, catalog groupings and retained routing/history evidence from the same
-frozen database. Both are maintenance commands authorized by `STASH_API_KEY`;
-producer ingest tokens cannot perform these imports.
-
-```sh
-stash-import-catalog-registry --registry /migration/registry.sqlite3 \
-  --identity-import /migration/identity-receipt.json --snapshot SNAPSHOT_UUID \
-  > /migration/registry-binding.json
-stash-import-catalog-registry --binding /migration/registry-binding.json \
-  --endpoint https://native-stash.example > /migration/registry-preview.json
-stash-import-catalog-registry --binding /migration/registry-preview.json \
-  --endpoint https://native-stash.example --expected-sha256 REVIEWED_PLAN_SHA256 --apply
-```
-
-Keep the frozen snapshot, saved binding and reviewed digest privately for retry.
-The second phase obtains the original registry UUID and capture time from the
-first phase's saved binding, preview or receipt. Unknown schema shapes are
-rejected, and uncertain identities remain review records. The imported catalog
-collections are disabled and have no scrape target/root binding. These commands
-do not import individual catalog bodies or activate workers. See the
-[native registry contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-source-identity.md#importing-the-performer-registry)
-for performer-import preparation, limits, ownership rules and inspection APIs.
-
-### Individual catalog snapshots
-
-`stash-prepare-catalog` prepares the individual catalog databases for the next
-import phase. It reads a frozen SQLite input in one read-only transaction,
-validates recognized schema versions 1–3, checks declared and logical references,
-and retains every physical record family. Unknown tables, columns and views fail
-preparation. Normalized sidecar views are inventoried without copying the same
-physical document twice.
-
-```sh
-stash-prepare-catalog --catalog /migration/catalogs/CATALOG_ID.sqlite3 \
-  --output /migration/prepared/CATALOG_ID --source REGISTRY_SOURCE_UUID \
-  --snapshot SNAPSHOT_UUID --captured-at FIXED_RFC3339_TIME
-stash-prepare-catalog --verify /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256
-```
-
-The output directory contains `manifest.json` and ordered `records-NNNNNN.jsonl`
-chunks. Each chunk holds at most 1,000 records and 16 MiB. SQLite text stays text,
-including original embedded JSON strings; binary sidecar bytes use an explicit
-base64 value. Hashes/counts cover every table, chunk and reconstructed capture.
-The manifest includes the original catalog identity, schema definitions and
-reference counts. Profile bodies and shared observations remain stored once per
-physical source row. Capture reconstruction verifies their references and patches
-without persisting expanded payload copies.
-
-Snapshots publish from a private temporary directory after file/directory flushes;
-existing destinations are never overwritten. Verification checks the saved
-manifest digest, chunk names/counts/hashes, ordered unique keys and binary
-checksums. After a lost preparation response, inspect the same directory with
-`--verify`. Preparation creates no native records, jobs or media and explicitly
-reports `imported:false`. Individually consistent live backups do not replace the
-coordinated production cutover snapshot.
-
-After importing the corresponding registry/collection mapping, receive a reviewed
-snapshot in a native database with:
-
-```sh
-stash-upload-catalog --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-The command validates the complete local snapshot before its first request. It
-uses the existing Stash application key from `STASH_API_KEY` (or `--api-key-env
-NAME`), never a producer token or website credential. It sends original bytes and
-the frozen manifest digest, checks each receipt's identity/counts, and resumes at
-the server's next chunk. Repeat the same command after interruption or response
-loss; an earlier committed chunk is not applied twice. Files changed after local
-verification cannot be uploaded under the original digest.
-
-The result has `state: "received"`, `imported: false`, and explicitly pending
-record families. This is temporary migration staging in native schema 1000030,
-not native metadata import or job activation.
-
-After receipt, map the frozen source evidence through native schema 1000031:
-
-```sh
-stash-import-catalog-evidence --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-This command uses the same application key and origin rules. It verifies the
-local snapshot and completed upload, then advances bounded native transactions
-from the server's last committed ordinal. Repeat the same command after a lost
-response or interruption. It retains native posts, shared revisions, captures and
-profiles, including profiles without capture references; it does not apply media
-or metadata changes. Qualified post IDs can share evidence across catalogs while
-unqualified local keys remain scoped to their original catalog. Mirror service
-namespaces stay distinct from native services.
-
-Exit 0 means these four evidence families were mapped; exit 2 means the pass
-finished with identity review outcomes; exit 1 means it failed or the response
-was unavailable. Every result remains `imported:false`: other families, semantic
-reconciliation and final migration completion are separate. Inspect bounded row
-summaries at `/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/evidence-import/records`.
-The original frozen rows remain available for review. No website credentials,
-source scheduling or existing selected Stash metadata are changed.
-
-Once the evidence pass has finished, import its account references, handle
-history, post URLs, aliases and historical account claims with schema 1000033:
-
-```sh
-stash-import-catalog-relations --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-This uses the same application API-key reference and frozen manifest. It first
-validates local files and the received snapshot, then resumes bounded batches
-from `/relations-import`. The server requires a completed evidence pass. Exit 0
-means mapped, exit 2 means completed with review outcomes, and exit 1 means
-failure or an unavailable response; rerun the same command after a lost response.
-
-Accounts use the snapshot's frozen registry mappings. Mirror handle fields are
-retained as legacy labels; ambiguous or invalid records remain for review with
-their complete original values. Historical post/account links are unselected
-claims, so they cannot silently choose publishers or depicted performers. Posts
-without an old account are counted as `unassigned`.
-
-Inspect bounded summaries at
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/relations-import/records`;
-append `/ORDINAL` to that path for full evidence. Summary keys above 8 KiB
-are omitted with `key_omitted:true`; the individual record retains the full key
-and source values. These receipts also remain `imported:false`. Importing media,
-memberships, sidecars, edits and other histories, choosing captured publishers,
-and final reconciliation remain separate work.
-
-After the evidence and relationship passes, select publishers from actual
-captured account IDs with native schema 1000034:
-
-```sh
-stash-import-catalog-publishers --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-The command uses the same application API-key reference, frozen manifest and
-resume behavior. It advances bounded batches through `/publisher-import`, using
-the core captured-account policy. Qualified IDs can link or create accounts;
-ambiguous candidates and invalid identities remain for review. Existing
-publisher choices and explicit unlinks are preserved. Captures without author
-IDs remain `unavailable`; folder names, scraped feed owners and old catalog
-links do not supply a publisher. Shared observation parents are not extra
-captures. This pass does not assign depicted performers or selected metadata.
-
-Exit 0 means completed without review outcomes, including any unavailable or
-preserved captures. Exit 2 means completed with review outcomes; exit 1 means
-failure or an unavailable response. Rerun the same command to resume a lost
-response. Inspect bounded summaries at
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/publisher-import/records`;
-append `/ORDINAL` for the full key and retained decision context. Receipts refer
-to existing captures and decisions rather than duplicating their source payloads.
-Every result remains `imported:false` until the remaining catalog families and
-final reconciliation are complete.
-
-Map supported source attachment lists from the received captures with schema
-1000035:
-
-```sh
-stash-import-catalog-attachments --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-This pass requires completed evidence mapping and uses the same application
-API-key reference, manifest checks and resume behavior through
-`/attachment-import`. It shares identical source lists, combines compatible
-partial lists, preserves source order and protects pinned/disabled choices.
-Contradictory lists retain review outcomes. Counters and filenames cannot supply
-missing album evidence: older Twitter captures without retained original lists
-remain unavailable even when individual downloaded files are known.
-
-Exit 0 means completed without review outcomes, including unavailable or
-preserved records; exit 2 means completed with review outcomes; exit 1 means
-failure or an unavailable response. Rerun the same command after interruption.
-Inspect summaries at
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/attachment-import/records`;
-append `/ORDINAL` for source keys and decision context. Conflict samples are
-bounded and explicitly marked when truncated. Original source manifests remain
-intact. Every result remains `imported:false`: file matching, legacy appearances,
-gallery construction and the other catalog families are subsequent work.
-
-Map assets, files and appearances with schema 1000038 and an explicit historical
-root mapping:
-
-```sh
-stash-import-catalog-media --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN \
-  --root-uuid ROOT_UUID --root-revision ROOT_REVISION \
-  --collection-revision COLLECTION_REVISION --library-root-path /media/porn
-```
-
-Use the path prefix stored in the copied Stash database, which may differ from
-the host's mount. The native logical root can remain disabled and offline. This
-binding neither activates a worker nor grants filesystem access. The command
-uses application authentication, validates the completed evidence pass and
-resumes the same immutable binding after interruptions.
-
-Shared asset claims retain declared digests without treating path-derived IDs
-as hashes. File observations retain missing, pending, deduplicated and converted
-paths. Matches require a unique literal library path or existing verified
-content; ZIP matches include archive/member identity. Appearances become native
-post-file evidence and, where one existing scene/image owns the matched file,
-post-media evidence. Unavailable files stay recorded; ambiguous or inconsistent
-matches require review. Download positions do not establish album order, and
-this pass preserves existing library metadata, attribution and galleries.
-
-Exit 0 means completed without review outcomes, exit 2 means completed with
-review outcomes, and exit 1 means failure or an unavailable response. Progress
-uses the processed-record count across the asset/file/appearance phases.
-Inspect `/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/media-import/records`
-for bounded summaries and append `/ORDINAL` for one full receipt. Results remain
-`imported:false` pending the other catalog families and final reconciliation.
-
-Map file edit, state and deduplication history with schema 1000066 after the
-reviewed media import completes:
-
-```sh
-stash-import-catalog-file-history --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-This pass reuses the frozen root/collection binding and retains the original
-event IDs, source timestamps, file locations and content claims. Each batch
-handles at most 50 records with a 16 MiB source-data budget. Resume the same
-command after an interrupted response; its cursor is the last source ordinal.
-Completed receipts remain stable after later collection edits.
-
-Metadata edits preserve each path separately. Old `null` values mean inherit;
-relationship values remain source names pending identity review. Unknown fields
-and unsupported representations remain inspectable extensions. Missing or
-conflicting deduplication members retain their declared paths for review.
-Historical state changes and deduplication never replay filesystem actions, and
-this import leaves current selected Stash fields untouched.
-
-Inspect `/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/file-history-import/records`
-for summaries and append `/ORDINAL` for the retained source row. Follow
-`history_uuid` to `/api/v3/archive/file-history/UUID` for the native event.
-Observation and claim history endpoints are documented in
-[source file history](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#source-file-history).
-Exit codes remain 0 (mapped), 2 (review), and 1 (failure/unavailable response).
-`imported:false` means final migration reconciliation and other families remain
-outstanding; a mapped history event does not mean its edits were applied.
-
-Map historical collection memberships with schema 1000039:
-
-```sh
-stash-import-catalog-memberships --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-The evidence import must have completed first. File matching is independent:
-a post can belong to a collection even when its media is missing. Original
-collection keys within the same catalog registry reuse one native group across
-all imported catalogs. Directory groups, including legacy `creator` groups,
-remain separate from performer ownership; subreddit groups retain their kind.
-New groups are disabled, with no inferred account, source URL or root binding.
-Unknown definitions and conflicting labels are retained for review. Existing
-native edits and historical definition revisions remain intact.
-
-Each transaction handles at most 50 memberships. Retry the same snapshot and
-manifest after interruption; the client reads committed progress before
-continuing. Exit 0 means mapped, exit 2 means review is required, and exit 1
-means a failure or unavailable response. Inspect
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/membership-import/records`
-and append `/ORDINAL` for the original values and native references. Native
-membership evidence is also readable by collection or post. This pass creates
-no albums and continues to report `imported:false` until the remaining families
-and final reconciliation are complete.
-
-Map retained NFO documents and historical selections with schema 1000042:
-
-```sh
-stash-import-catalog-documents --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-Run the evidence pass first. This command uses the existing Stash application
-API key; no website login or cookie is involved. It retains original document
-bytes, parser results, path/post associations and explicit selected heads.
-Older catalogs without a head at a path keep the original reader's latest
-text-timestamp/hash fallback, recorded as `legacy_fallback`. An invalid explicit
-head requires review. Existing native selections and manual unlinks are
-preserved. No scene/image metadata is applied, and paths are never opened.
-
-The same frozen snapshot and manifest digest resume after interruption. The
-checkpoint is the processed-record count across document/source/head phases.
-Exit 0 means mapped, exit 2 means review outcomes, and exit 1 means a failure or
-unavailable response. Inspect
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/document-import/records`
-for bounded summaries, or append `/ORDINAL` for original values and native
-references. Completion remains `imported:false` until the entire catalog
-migration and reconciliation have finished.
-
-Map retained translation results and provenance with schema 1000043:
-
-```sh
-stash-import-catalog-translations --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-Run the evidence pass first. The command uses the Stash application API key.
-It shares exact original/output text and language/provider facts across posts
-while retaining each catalog's provenance and source timestamp. Unknown languages
-remain unknown; they do not become English translations. Original declared input
-hashes are verified using the historical catalog JSON encoding. Missing hashes
-or originals remain explicit; conflicting hashes require review. Importing does
-not change scene/image fields or submit provider work. Translation jobs/cache
-state are migrated separately.
-
-Retry the same snapshot and manifest digest after interruption. The client
-resumes from the last committed source ordinal. Exit 0 means mapped, exit 2 means
-review outcomes, and exit 1 means failure or an unavailable response. Inspect
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/translation-import/records`
-for bounded summaries, or append `/ORDINAL` for original values and native
-references. Post evidence and shared results also have application read APIs;
-see [retained translations](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#retained-source-translations).
-Completion remains `imported:false` pending the remaining catalog migration.
-
-Map historical enrichment receipts with native schema 1000057 after the evidence
-pass:
-
-```sh
-stash-import-catalog-enrichment --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-The command uses the application API key and resumes the last committed source
-ordinal after an interrupted or lost response. Exit 0 means mapped (including a
-catalog without this optional family), exit 2 means review outcomes, and exit 1
-means failure or an unavailable response. Inspect
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/enrichment-import/records`, or
-append `/ORDINAL` for the original values and native receipt reference.
-
-Original completion times and unresolved-child counts stay intact. Importing a
-historical receipt does not schedule a website request, invent a native worker
-attempt, or assert that all child metadata was retrieved. Queue/cooldown import
-and activation remain separate; `imported:false` still means the entire catalog
-migration is not complete. See [historical enrichment receipts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#historical-enrichment-receipts).
-
-Retain historical metadata cleanup with native schema 1000080 after the evidence
-pass:
-
-```sh
-stash-import-catalog-cleanup --snapshot /migration/prepared/CATALOG_ID \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-The command uses the application API key and resumes the last committed source
-ordinal. Exit 0 means all queue entries were retained as held intent, including
-an absent or empty queue; exit 2 means malformed entries need review; exit 1
-means failure or an unavailable response. Retry the same frozen snapshot and
-digest after an interruption or lost response. Inspect
-`/api/v3/archive/catalog-snapshots/SNAPSHOT_UUID/cleanup-import/records`, or
-append `/ORDINAL` for the original values and native intent reference.
-
-This old queue records unfinished background metadata cleanup following a catalog
-prune. Importing it preserves the original catalog scope and timestamp without
-deleting media, removing recreated posts or cancelling native work. The intents
-remain held; execution and reviewed disposition require separate native retention
-work. `imported:false` still means the whole catalog migration is incomplete.
-See [historical metadata cleanup](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#historical-metadata-cleanup).
-
-## Frozen automation input
-
-Prepare the separate automation database from a consistent SQLite backup:
-
-```sh
-stash-prepare-automation --automation /migration/automation.sqlite3 \
-  --output /migration/prepared/automation --snapshot SNAPSHOT_UUID \
-  --source REGISTRY_SOURCE_UUID --captured-at SNAPSHOT_TIME
-stash-prepare-automation --verify /migration/prepared/automation \
-  --expected-sha256 MANIFEST_SHA256
-```
-
-Use the same registry source UUID as the catalog imports, a stable snapshot UUID,
-and the backup's capture time. Preparation requires the complete recognized
-automation schema (application `SCPC`, versions 1–3). It rejects active journals,
-unknown tables/columns, corrupt inputs and changes to the source file during
-export. It opens the frozen database immutably and never runs its stored SQL or
-changes its source files. The manifest retains the original database checksum,
-schema inventory, per-table hashes and bounded ordered record chunks.
-
-All ten maintenance, translation, enrichment and discovery families are retained.
-Values include exact original/cached text, raw JSON strings, nulls, binary values,
-SQLite integers and retry timestamps. Malformed legacy JSON and broken foreign-key
-references remain evidence for domain review; preparation never repairs them or
-reclassifies their jobs. Output files are private and flushed before publication;
-an existing destination is never replaced. After an interrupted acknowledgement,
-verify the published directory using its original manifest digest.
-
-This command only prepares and verifies input. Its summary reports
-`prepared:true`, `imported:false` and every pending family. The production cutover
-requires catalogs, automation and other writers to share a coordinated backup
-boundary.
-
-Retain the prepared input in native schema 1000046 after importing its registry:
-
-```sh
-stash-upload-automation --snapshot /migration/prepared/automation \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-This command uses the existing Stash application API key in `STASH_API_KEY`, or
-the variable named by `--api-key-env`. Scoped producer tokens cannot administer
-migration input. The registry source UUID must already have an imported registry.
-One frozen automation snapshot is bound to that source in the target database;
-another snapshot or changed manifest conflicts instead of replacing its evidence.
-
-Retry the same directory and manifest digest after interruption. The client
-verifies local files, reads the committed checkpoint and continues at the next
-chunk. Each chunk's original records and progress commit together, including
-after a lost response. Exit 0 means every chunk was received; exit 1 means an
-error or unavailable response, which does not prove that the last write failed.
-Inspect the receipt at
-`/api/v3/archive/automation-snapshots/SNAPSHOT_UUID`.
-
-`state:received` proves byte/count agreement with the frozen input. It still
-reports `imported:false` and all ten families pending, including for an empty
-snapshot. No jobs, targets or provider requests are created. Native mapping of
-historical outcomes and pending work, followed by reviewed activation, remains
-separate work; upload completion is not a completed automation migration.
-
-### Frozen translation history and work
-
-After receiving automation input and importing catalog post evidence, use:
-
-```sh
-stash-import-automation-translations --snapshot /migration/prepared/automation \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-This application-authorized command maps `translation_jobs` and
-`translation_targets` in schema 1000047. It verifies the frozen files before
-network access, resumes the server's exact source ordinal, and processes bounded
-transactions. Repeat the same command after a lost response or interruption.
-Completed replay only reads its receipts. Exit 0 means these two families mapped;
-exit 2 means processing finished with retained review items; exit 1 means an error
-or unavailable response. Every result still reports `imported:false`: the other
-automation families and activation have separate completion requirements.
-
-Shared requests retain exact original text and the legacy worker's English
-translation policy. Valid cached outcomes are shared; conflicting native cache
-results remain unchanged and the source rows go to review. Historical English
-rewrites are retained in the original receipt, while native `unchanged` results
-preserve the exact original text. Job update times are not provider capture times.
-
-Applied targets become historical completions only when their post and cached
-outcome are proven. Unapplied targets are held with their original priority and
-retry deadline. No worker or provider is activated and no selected scene/image
-metadata changes. Old attempts, errors and raw outcomes remain available through
-the source record. Known unfinished catalog evidence imports must finish first;
-unmatched or forgotten posts stay reviewable. Exact legacy post aliases may share
-a target, while preexisting targets and later native edits retain their choices.
-
-Inspect progress and paginated records under
-`/api/v3/archive/automation-snapshots/SNAPSHOT_UUID/translation-import`, with
-`/records?after=ORDINAL&limit=100` for bounded summaries and `/records/ORDINAL`
-for the exact retained source values. These application routes do not accept
-producer tokens. The original source snapshot, receipts, held targets and
-historical evidence survive ordinary database backup and restore.
-
-### Activate imported translation holds
-
-`stash-activate-automation-translations` prepares and resumes a reviewed bulk
-activation through the application API. The translation mapping must have
-finished first. Here `--snapshot` is its native snapshot UUID;
-`--manifest-sha256` is the original frozen automation manifest digest.
-
-```sh
-stash-activate-automation-translations prepare --endpoint STASH_ORIGIN \
-  --snapshot SNAPSHOT_UUID --manifest-sha256 AUTOMATION_MANIFEST_SHA256 \
-  --output /migration/translation-activation
-
-stash-activate-automation-translations show \
-  --plan /migration/translation-activation --expected-sha256 PLAN_SHA256 --page 0
-
-stash-activate-automation-translations apply --endpoint STASH_ORIGIN \
-  --plan /migration/translation-activation --expected-sha256 PLAN_SHA256
-
-stash-activate-automation-translations status --endpoint STASH_ORIGIN \
-  --plan /migration/translation-activation --expected-sha256 PLAN_SHA256
-```
-
-Preparation reads indexed pages of original held receipts. Each saved page
-contains at most 100 candidates, their current schedules and exclusion reasons,
-and a preview for its eligible targets. The private plan directory retains every
-operation UUID and reviewed server hash before any Apply. Its returned
-`plan_sha256` is the digest used by the remaining commands. Preparation never
-releases work or overwrites an existing plan. At most one million original holds
-can enter one plan; separate JSON pages keep individual records bounded.
-Show validates the manifest and requested page without reading every other page.
-
-Apply validates all saved pages before its first mutation and checks each page
-again when reading it. It verifies existing activation receipts before issuing
-new Apply requests, preserving the original operation after a committed response
-is lost. Resume with the same directory, endpoint and reviewed manifest digest.
-Each page commits atomically; a stale member leaves that batch in `conflict`
-while other batches can finish. Apply lists those page/operation references;
-Status checks retained activation receipts and reports missing ones as pending.
-Later native holds, completed targets and forgotten posts remain excluded from
-the original migration selection. Changed native holds require separate
-application review.
-
-Activation preserves priorities and retry deadlines and makes those targets
-pending. An enabled provider worker may then admit due targets through its
-ordinary limits. `activation_complete` reports release of this plan's eligible
-targets; `execution_status: not_checked` explicitly leaves provider completion
-unverified. This command does not complete the overall catalog migration.
-
-The command uses `STASH_API_KEY` or `--api-key-env`, with application
-authorization. Exit codes are 0 for preparation/show or complete activation,
-1 for invalid input/transport failure, 2 for conflicting batches requiring
-review, and 3 for work not yet activated. Saved plans contain source identifiers
-and schedules, never the application key. Redirected, malformed and oversized
-responses are rejected. See [activation API contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewed-translation-activation).
-
-### Frozen enrichment history and work
-
-After receiving the automation snapshot and completing catalog post evidence,
-relationship and enrichment-receipt imports, run:
-
-```sh
-stash-import-automation-enrichment --snapshot /migration/prepared/automation \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-The command uses the application key in `STASH_API_KEY` (or `--api-key-env`).
-It verifies frozen input before contacting Stash, resumes from native progress
-and recovers a committed response being lost by reading that progress on rerun.
-Pages contain at most 200 source records or 16 MiB. A terminal replay performs
-only reads. Exit 0 means this pass mapped its inputs; exit 2 means it retained
-review outcomes; exit 1 means invalid input or unavailable/invalid responses.
-All outcomes retain `imported:false` for the overall migration.
-
-Pending/retry enrichment becomes held work. Original attempts, per-account or
-platform delays, seed cursors and source progress are preserved. No website is
-contacted and no job is activated. Historical completion requires a scoped old
-receipt; an `already_native` assertion requires a scoped gallery-dl capture.
-Missing proof stays in review. Original staged JSON requires conversion/review
-and is never thrown away to refetch. Coalesced work requires an explicit catalog
-alias. Existing native choices are preserved.
-
-Inspect application API progress and mapped/source records under
-`/api/v3/archive/automation-snapshots/SNAPSHOT_UUID/enrichment-import`, including
-`/records?after=ORDINAL&limit=100` and `/records/ORDINAL`. The
-[schema contract](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#frozen-enrichment-work) explains
-historical completion bases and retained URL evidence. This command does not
-replace coordinated cutover inputs, review resolution or reviewed activation.
-
-### Frozen discovery and maintenance history
-
-After the frozen enrichment mapping finishes, retain discovery continuations and
-maintenance history from the same received snapshot:
-
-```sh
-stash-import-automation-discovery --snapshot /migration/prepared/automation \
-  --expected-sha256 MANIFEST_SHA256 --endpoint STASH_ORIGIN
-```
-
-This application-authorized command verifies the frozen inputs, resumes from
-the committed source ordinal, and uses batches of at most 200 records or 16 MiB.
-Repeat the same command after an interruption; a terminal replay only reads.
-Exit 0 means all records in this pass mapped, 2 means some require review, and
-1 means input or transport failure. Overall migration remains `imported:false`.
-
-Discovery recovers the source post associated with old media. It does not link
-accounts to performers. Account listings retain their exact saved cursor,
-historical page/attempt counts and retry delays, including imported cooldowns.
-Pending targets and candidate URLs remain unconfirmed. Existing lookup work
-references the enrichment mapping rather than creating duplicate targets.
-Completed assertions require retained receipts or source captures; a status
-label alone cannot establish completion. Staged page/detail results and
-ambiguous candidates remain available for review without fetching them again.
-
-Maintenance watermarks, seed summaries, source exclusions and pruning summaries
-are historical evidence. They do not replace native cursors or policies or
-certify that native work has run. Unknown formats keep their original values
-with a review reason. No scraping, job activation, performer assignment or
-scene/image metadata changes occur in this pass.
-
-Inspect `/api/v3/archive/automation-snapshots/SNAPSHOT_UUID/discovery-import`,
-`/records?after=ORDINAL&limit=100`, and `/records/ORDINAL`. Compact summaries link
-native accounts, posts and collections where validated; selected-record details
-read original values from the retained snapshot rather than another payload
-copy. See the [schema contract](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#frozen-discovery-and-maintenance-history).
-Use the separate reviewed activation command below to bind selected held targets.
-Importing this history never activates them automatically.
-
-### Reviewed discovery activation
-
-`stash-activate-automation-discovery` prepares a private review file for one
-account listing and 1–1,000 explicitly selected original discovery targets.
-It uses an application API key from `STASH_API_KEY`, as the importers do.
-Producer credentials cannot authorize these bindings.
-
-The input JSON contains `manifest_sha256`, `listing`, and `targets`:
-
-```json
-{
-  "manifest_sha256": "FROZEN_AUTOMATION_MANIFEST_SHA256",
-  "listing": {
-    "account_uuid": "NATIVE_ACCOUNT_UUID",
-    "collection_uuid": "REVIEWED_COLLECTION_UUID",
-    "collection_revision": 2,
-    "root_uuid": null,
-    "profile_url": "https://www.reddit.com/user/example/submitted/?sort=new",
-    "policy_sha256": "REVIEWED_DISCOVERY_WORKER_POLICY_SHA256",
-    "extractor_version": "1.32.15-dev",
-    "initial_cursor": {"after": "t3_SAVED_CURSOR"},
-    "historical_pages": 67,
-    "legacy": {"snapshot_uuid": "FROZEN_AUTOMATION_SNAPSHOT_UUID", "account_ordinal": 7},
-    "not_before": "2026-10-04T00:00:00Z"
-  },
-  "targets": [{"source_ordinal": 10, "source_sha256": "ORIGINAL_TARGET_RECORD_SHA256"}]
-}
-```
-
-Replace the example values with the selected retained records. The account and
-target details come from the discovery-import routes above; targets must belong
-to that account and collection. Preserve the original profile URL, cursor,
-historical count and retry deadline. Use `initial_cursor: null` when no cursor
-was retained. Select the reviewed current collection revision and its actual
-root, which may be null; `GET /api/v3/archive/collections/{collection}` retrieves
-that current definition directly. Imported collections start disabled. Worker policy and
-runtime come from the producer's profile inspection command:
-
-```sh
-stash-ingest --outbox /persistent/producer.sqlite --endpoint STASH_ORIGIN \
-  --producer PRODUCER_UUID discovery-policy --profile PROFILE_PATH
-```
-
-Website credentials and the worker's private configuration stay on the producer.
-The backend rejects unresolved historical staging and stale source bindings.
-
-```sh
-stash-activate-automation-discovery prepare --endpoint STASH_ORIGIN \
-  --input /migration/review/discovery-input.json \
-  --output /migration/review/discovery-plan.json
-stash-activate-automation-discovery show \
-  --plan /migration/review/discovery-plan.json --expected-sha256 PLAN_FILE_SHA256
-stash-activate-automation-discovery apply --endpoint STASH_ORIGIN \
-  --plan /migration/review/discovery-plan.json --expected-sha256 PLAN_FILE_SHA256
-stash-activate-automation-discovery status --endpoint STASH_ORIGIN \
-  --plan /migration/review/discovery-plan.json --expected-sha256 PLAN_FILE_SHA256
-```
-
-`prepare` only previews. It saves the returned post UUIDs/revisions, complete
-listing definition, original record hashes and operation ID before any Apply.
-The returned `plan_sha256` hashes the saved file; pass that value to subsequent
-commands. The server's separate preview hash is retained inside the file.
-An optional input `uuid` or `listing.uuid` can pin an existing identity; omitted
-ones are generated once during preparation. Additional batches for the same
-listing must reuse its saved UUID and exact definition.
-
-`show` works offline. Apply and status recheck the file and endpoint and recover
-the original server receipt after a lost response. Reuse the same file and hash;
-do not generate another operation to retry. A changed source returns exit 2 for
-review, an unapplied status returns 3, and invalid input or transport failure
-returns 1. Exit 0 from Apply proves the bindings were retained. It does not prove
-scraping, comparison, post identity, historical coverage or catalog import
-completion; those have separate native execution and review steps.
-
-For a listing that resumes after unavailable historical batches, prepare a
-separate recovery plan with a new listing UUID. Keep the same account, collection,
-profile URL and `legacy` reference, set `initial_cursor: null` and
-`historical_pages: 0`, and add:
-
-```json
-"recovery_of": {"listing_uuid": "ORIGINAL_LISTING_UUID", "sha256": "ORIGINAL_LISTING_SHA256"}
-```
-
-The original definition is available through `GET /api/v3/archive/discovery-listings/{listing}`.
-Select targets already bound to it, preserve its deadline and the latest attempt's
-available time, and review current collection/root and worker policy values.
-Use the same prepare/show/apply/status commands and a new saved plan file. Further
-target batches reuse the same recovery listing. A running producer must finish
-or be recovered before Apply; queued predecessor work is cancelled atomically.
-Earlier pages and candidate evidence remain reviewable and can still block a
-conflicting match. See [recovery semantics](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md#recovering-a-search-with-missing-historical-batches).
-
-### Legacy enrichment checkpoints
-
-After the frozen enrichment mapping finishes, convert saved collector results:
-
-```sh
-stash-import-enrichment-checkpoints \
-  --snapshot /migration/frozen-automation \
-  --expected-sha256 AUTOMATION_MANIFEST_SHA256 \
-  --endpoint STASH_ORIGIN
-```
-
-The command uses the same application key environment setting as the other
-importers. It verifies the frozen files and exact number of staged records,
-then resumes native conversion from the last committed source ordinal. Repeat
-the same command after a lost response. Exit 0 means conversion finished, 2 means
-some formats require review, and 1 means input or transport failure.
-
-Inspect progress and paged summaries at
-`/api/v3/archive/automation-snapshots/{snapshot}/enrichment-checkpoints` and
-`.../records?after=0&limit=100`. Select `.../records/{ordinal}` to inspect original
-values and the converted body. Repeated metadata is shared, source record order
-is retained, and pending children keep their saved parent context. The old
-collector did not record observation times, so conversion explicitly leaves them
-unknown. Unsupported formats retain their original evidence for review.
-
-This preserves staging without fetching sources, creating captures, releasing
-review holds or claiming completion of the underlying work. The resulting
-`legacy-enrichment-staging-v1` documents still require a reviewed handoff before
-native worker execution. `imported` remains false for the overall migration.
-
-### Reviewed enrichment activation
-
-After completing the frozen enrichment mapping, review and enable the relevant
-native collection definitions. Imported collections start disabled; enabling
-one creates a new revision. The activation preview explicitly connects the old
-held work to that reviewed revision, retaining its URL, priority and retry delay.
-It does not change the original catalog scope or start a collector itself.
-
-```sh
-stash-activate-automation-enrichment prepare --endpoint STASH_ORIGIN \
-  --snapshot SNAPSHOT_UUID --manifest-sha256 AUTOMATION_MANIFEST_SHA256 \
-  --output /migration/enrichment-activation
-
-stash-activate-automation-enrichment show \
-  --plan /migration/enrichment-activation --expected-sha256 PLAN_SHA256 --page 0
-
-stash-activate-automation-enrichment apply --endpoint STASH_ORIGIN \
-  --plan /migration/enrichment-activation --expected-sha256 PLAN_SHA256
-
-stash-activate-automation-enrichment status --endpoint STASH_ORIGIN \
-  --plan /migration/enrichment-activation --expected-sha256 PLAN_SHA256
-```
-
-The returned `plan_sha256` binds all saved pages. Review both original and release
-targets, the exact URL, post revision and chosen collection revision. Several
-legacy aliases for one target appear once. A destination already used by native
-work stays in review. If the collection revision changes, Apply excludes the old
-hold with `activation_rebound` and creates the corresponding pending target at
-the reviewed revision. Both histories remain available. For unchanged scope it
-advances the existing hold. It never modifies a later native hold or exclusion.
-
-Preparation and Show are read-only. Apply validates the complete saved plan,
-checks each atomic batch again at the server, and reads existing receipts before
-retrying a lost response. Resume with the same plan directory and digest. A
-changed post, schedule or collection requires a new preview; already successful
-operations keep their original receipts. No application key is saved in a plan.
-
-Exit codes follow translation activation: 0 for preparation/show or complete
-activation, 1 for invalid input/transport failure, 2 for batches or discovered
-candidates needing review, and 3 for targets awaiting Apply. Disabled/retired
-collections, forgotten posts, changed targets and occupied replacements make
-`needs_review` true and prevent an empty selection from claiming completion.
-`execution_status: not_checked` leaves collector completion unverified.
-
-The client supports up to one million candidates in pages of 100. Saved pages
-allow long URLs and escaped JSON without loading the entire library into memory.
-It uses `STASH_API_KEY` or `--api-key-env` and requires application authorization.
-See [activation API contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewed-enrichment-activation).
-
-### Reviewing pending work after editing a collection
-
-Pending metadata lookups retain the collection revision under which they were
-created. If that definition changes before work starts, use
-`stash-review-enrichment-collections` to review transfer to its current revision.
-The original target, URL, priority, retry deadline and all history are preserved.
-Targets with any previous worker attempt need checkpoint/recovery review instead.
-
-```sh
-stash-review-enrichment-collections candidates --endpoint STASH_ORIGIN \
-  --collection COLLECTION_UUID --revision CURRENT_REVISION --limit 100
-
-stash-review-enrichment-collections prepare --endpoint STASH_ORIGIN \
-  --input /migration/collection-selection.json --output /migration/collection-review.json
-
-stash-review-enrichment-collections show \
-  --plan /migration/collection-review.json --expected-sha256 PLAN_SHA256
-
-stash-review-enrichment-collections apply --endpoint STASH_ORIGIN \
-  --plan /migration/collection-review.json --expected-sha256 PLAN_SHA256
-
-stash-review-enrichment-collections status --endpoint STASH_ORIGIN \
-  --plan /migration/collection-review.json --expected-sha256 PLAN_SHA256
-```
-
-The selection JSON contains `collection_uuid`, `collection_revision`, `reason`
-and `targets`, an array of 1–100 `{target_uuid, revision}` objects from eligible
-candidates. An optional `uuid` fixes the review identity; preparation otherwise
-creates one and retains it in the private plan. Each plan handles one explicit
-batch. For another candidate page, pass both `--after-collection-revision` and
-`--after-target` from the returned `next_cursor`. Keep every prepared plan and
-its digest when processing several batches. Preparation and Show are read-only.
-
-Review the collection definition, original source URLs and schedules in the
-saved plan. Apply atomically excludes the old pending target and creates its
-replacement at the reviewed revision. It starts no collector and does not change
-profiles, policies or media metadata. Existing replacements and changed source,
-schedule or collection revisions require a fresh review. Prior worker attempts
-are never discarded or cancelled by this operation.
-
-Plans are never overwritten and their hashes are checked again before use.
-Apply reads the original receipt before submitting; after an interrupted response,
-reuse the same plan and digest. `rebound` confirms this transfer only;
-`execution_status: not_checked` does not claim the lookup ran. Exit codes are 0
-for preparation/show/candidates or a committed transfer, 1 for invalid input or
-transport failure, 2 for a conflict, and 3 for a saved transfer awaiting Apply.
-Authentication uses `STASH_API_KEY` or `--api-key-env`, never a key inside the plan.
-See [collection review API contracts](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewing-unstarted-enrichment-after-a-collection-change).
-
 ## Historical post-to-media links
 
 `stash-backfill-post-media` connects retained post/file appearances to existing
 scenes and images even when an old NFO capture has no attachment manifest. It
 uses native file-generation, path/content and current ownership checks. It
 preserves explicit choices, leaves conflicting matches in review and creates
-no attachment order or album. Run it after catalog media evidence has been
-imported; source-album matching below remains a separate operation.
+no attachment order or album. Source-album matching below remains a separate
+operation.
 
 ```sh
 stash-backfill-post-media prepare --endpoint STASH_ORIGIN --output /migration/post-media
@@ -2441,7 +1640,7 @@ Exit 2 means review is required (including stale, failed or cancelled work),
 exit 3 means queued/running/unsubmitted work remains, and exit 1 means an error
 or unavailable response. An error does not prove that a preceding request failed
 to commit. Plan completion does not mean all source media was downloaded, all
-catalog families were imported, or the full migration is complete.
+the full migration is complete.
 
 To cancel, inspect the job revision, then use `cancel` with the plan arguments,
 `--post POST_UUID` and `--expected-revision REVISION`. Cancellation cannot undo
@@ -2734,8 +1933,8 @@ exports or testing this command does not install a live runtime or activate jobs
 
 `stash-import-backfills` migrates permanent account completion/skip decisions
 through the native application API. It handles `backfill_completion` and
-`legacy_backfill_skip`; per-scan completions and the remaining journal/catalog
-families still require the broader migration. This is a maintenance command,
+`legacy_backfill_skip`; per-scan completions and the remaining journal families still
+require the broader migration. This is a maintenance command,
 separate from normal worker ingestion and the staged native n8n adapter.
 
 ```sh
@@ -3029,19 +2228,10 @@ Legacy queue mapping and production host/n8n launchers remain transition work.
 
 ### Durable selected-job execution
 
-The current client requires native `enrichment_protocol: 2`. After application
-review of a legacy checkpoint, `EnrichmentClient.admit_handoff(handoff_uuid,
-plan_sha256, policy_sha256, extractor_version)` consumes that exact review and
-returns its native job. Exact retry returns the same job after a lost response.
-The application review/seed API is documented in
-[native schema](https://github.com/notsafeforgit/stash/blob/develop/docs/native-schema.md#reviewing-an-exact-checkpoint-handoff).
+The current client requires native `enrichment_protocol: 2`.
 
-The executor automatically resumes the job's verified retained seed when no
-checkpoint exists. Its prefix keeps original capture UUIDs and null historical
-observation times. It fetches only pending children and gives fresh observations
-their own times and parent bindings. Saved outbox deliveries take priority over
-seed reads or extraction after restart. Admission does not write a fake initial
-checkpoint. The same execution commands below handle ordinary and handoff jobs.
+Saved outbox deliveries take priority over extraction after restart. Admission
+does not write a fake initial checkpoint.
 
 `enrichment_worker.execute(outbox, client, profile, job_uuid)` executes or recovers
 one admitted native enrichment job. `profile=None` only recovers persisted
@@ -3115,8 +2305,8 @@ can exist only there. Schema 7 → 8 preserves all prior tables and receipt byte
 older producer binaries refuse schema 8. The native Stash schema is unchanged.
 
 The selected-job executor requires a known job UUID. The dispatcher below adds
-discovery and admission. Shared native pacing is described above; replacement of
-the scheduled enrichment service remains transition work.
+admission. Shared native pacing is described above; replacement of the scheduled
+enrichment service remains transition work.
 
 ### Enrichment dispatch and native maintenance
 
@@ -3186,8 +2376,7 @@ conversion still precede service activation.
 
 ### Dispatch across local profiles
 
-`dispatch-all` rotates across reviewed download, enrichment, account-listing and
-candidate-detail profiles without
+`dispatch-all` rotates across reviewed download and enrichment profiles without
 requiring callers to enumerate every collection. Keep a stable UUID for the local
 worker list and stable entry IDs across restarts:
 
@@ -3198,9 +2387,7 @@ worker list and stable entry IDs across restarts:
   "profiles": [
     {"id": "reddit-download", "operation": "download", "profile": "reddit-download.json"},
     {"id": "reddit-metadata", "operation": "post.enrich", "profile": "reddit-metadata.json"},
-    {"id": "twitter-metadata", "operation": "post.enrich", "profile": "twitter-metadata.json"},
-    {"id": "reddit-discovery", "operation": "account.list_page", "profile": "reddit-discovery.json"},
-    {"id": "reddit-details", "operation": "post.verify_candidate", "profile": "reddit-details.json"}
+    {"id": "twitter-metadata", "operation": "post.enrich", "profile": "twitter-metadata.json"}
   ]
 }
 ```
@@ -3211,15 +2398,14 @@ stash-ingest --outbox /persistent/producer.sqlite --endpoint STASH_ORIGIN \
 ```
 
 The list accepts 1–32 distinct entries. Relative profile paths resolve beside
-the list. Each entry uses its operation's download, enrichment, account-listing or detail profile
-contract; website access stays local, and the list does not confer native source
-permissions or enable unsupported extractors.
+the list. Each entry's `operation` is `download` or `post.enrich`, and it uses
+that operation's profile contract; website access stays local, and the list does
+not confer native source permissions or enable unsupported extractors.
 
 One invocation delivers an ordinary event batch, advances a backfill call,
 resolves a caller page and submits one source request. It then tries one saved
-enrichment, discovery and detail delivery before loading any website
-profile, and rotates through the list until one profile performs work or all
-profiles have been checked. Saved
+enrichment delivery before loading any website profile, and rotates through the
+list until one profile performs work or all profiles have been checked. Saved
 metadata can therefore finish delivery even if its original website profile was
 removed or its access binding is unavailable. Native historical scope and
 ownership checks still apply; conflicting evidence remains retained for review.
@@ -3279,15 +2465,6 @@ collection. The worker follows pages of at most 20 collections and uses the
 existing collection dispatcher for admission and execution. Unsupported URLs
 are skipped during target traversal; the server still validates every claim.
 
-Account-listing entries use `stash-gallery-discovery-v1` profiles and require
-`discovery_collections_protocol: 1`. Their collection lookup returns permitted
-active containers with existing listing definitions; each container's dispatcher
-then checks policy/runtime readiness. It can return idle when all its definitions
-are stale, complete or ineligible for that profile. Later registrations under a
-root grant are discovered without changing this worker list. Moved collections
-no longer belong to the old root grant. This does not create listing definitions
-or activate imported accounts.
-
 Producer schema 15 stores profile rotation, independent saved-delivery cursors
 for discovery, enrichment and candidate details, and each operation's per-policy collection
 cursors/backoff. Selection commits before execution, so a restart or a
@@ -3323,179 +2500,6 @@ adds the candidate-inspection cursor without replacing pending work or resetting
 backoff. Older producer binaries refuse schema 15;
 include the outbox in backups and retain its pending evidence during rollback.
 These outbox cursor tables do not require a separate native database migration.
-
-### Account listing page collector
-
-`stash_ingest.discovery_fetch` provides the isolated metadata collector for the
-native account-discovery worker. Its `fetch` helper reads one Reddit submitted
-listing page or Twitter timeline page using the pinned gallery-dl runtime. It
-accepts the original Reddit `after` or Twitter `cursor` continuation, acquires
-the service reservation before extractor initialization, and stops at the page
-boundary. It constructs no download job, archive or postprocessor and never
-follows queued media/child URLs. Website settings stay in the private child
-process input. The in-process `collect` helper is only for that child and tests.
-For Twitter `/timeline` URLs, a page is one request of the same listing as a
-full-history download: the posts timeline (discovery enables text posts and
-reposts), then the unfiltered history search. Its cursor is the listing
-checkpoint; a cursor from the removed timeline extractor returns
-`invalid_checkpoint`.
-
-The `stash-discovery-page-v1` result binds the exact profile URL, input cursor,
-next cursor, extractor/retention versions and compact metadata records. Empty
-final pages are explicit; an unchanged cursor is a pagination error. Shared
-fields, original observation times, source number precision and reduced preview/
-profile data use the existing metadata bundle codec. Pages retain the historical
-4,096-record limit, within 32 MiB serialized and 128 MiB reconstructed bounds;
-ordinary single-post enrichment keeps its 1,024-record limit.
-
-The native backend validates this same page contract with
-`archive.ParseDiscoveryPage`; both implementations exercise a shared corpus for
-profile URLs, source numbers, compact metadata, cursor advancement and malformed
-pages. Fresh discovery records cannot claim retained capture provenance. Parsing
-is separate from binding the page to an authorized job or accepting a post match.
-
-This collector does not submit a job, advance a stored cursor, accept a source
-post match or certify an account scan as completed. Native discovery storage and
-the [scoped worker HTTP protocol](https://github.com/notsafeforgit/stash/blob/develop/docs/native-ingestion.md#account-listing-discovery)
-now retain one page per owned job, releasing the service before the next page.
-The protocol advertises `discovery_protocol: 1`,
-`discovery_source_pacing_protocol: 1` and `discovery_dispatch_protocol: 1`.
-It accepts existing definition UUIDs and their pinned hashes, not replacement
-source definitions or worker-selected initial cursors.
-
-`discovery_readiness_protocol: 1` adds bounded discovery for a selected collection
-and exact policy/runtime. Negotiate with `client.capabilities(readiness=True)`.
-`ready_jobs(...)` returns due admitted jobs by increasing sequence;
-`ready_listings(...)` returns definitions eligible for a new page, plus an
-inspection cursor and `has_more`. Follow that cursor even when the candidate
-array is empty. Filtering still inspects at most the requested number of
-definitions, so mismatched policies or future deadlines cannot force an
-unbounded historical scan. Listing summaries never repeat the retained bodies.
-Readiness is read-only; admission and claim validate eligibility again.
-
-The native server maintains stale/expired ownership every 30 seconds without a
-producer connection. It cancels changed sources and recovers expired claims
-with source pacing and failure limits. Account merges and disabled roots
-cannot redirect a previously authorized listing. Prior pages and original
-receipts survive; failed/cancelled jobs still require explicit reviewed retry.
-
-`discovery_client.DiscoveryClient(Client(...))` implements that protocol. It
-validates each listing's canonical definition hash, requested cursor, page job
-and completion receipt. `append_page(description, lease.job, page)` checks the
-page against its original request before sending its compact JSON body, then
-verifies the receipt's exact body hash, ordinal, producer and attempt fence.
-Admission, page and controlled-failure acknowledgements can be replayed after a
-lost response without creating another attempt or skipping the next cursor.
-
-Use `JobLease.claim(client, description, owner=..., seconds=180)` with the full
-discovery description; its immutable listing supplies the pinned policy/runtime.
-The returned lease shares enrichment's server-clock deadline, heartbeat and
-source-reservation handling. Keep the owner UUID across a lost claim response,
-start the heartbeat, pass its checks/reservations to extraction and close it when
-the attempt ends. Lease renewal alone does not persist a fetched page.
-
-Producer schema 11 adds `discovery_journal.DiscoveryJournal` for durable delivery
-of a selected page job. It records the immutable listing/cursor binding and
-stable claim owner before network access, then retains exact compact page bytes
-with their original attempt. A verified acknowledgement and local body removal
-commit together. Nonfinal receipts finish only that page's delivery. Retryable
-failure acknowledgements clear the ended claim while preserving its outcome.
-
-Reserve the full 32 MiB page allowance before extraction; after saving a page,
-only its actual bytes remain reserved. Discovery, enrichment and ordinary event
-admission share the same outbox byte limit under SQLite transactions. Pending or
-review evidence is never evicted to make space. The discovery process lock is
-independent of enrichment and ordinary delivery; a process crash releases that
-lock while preserving saved work. A current owned attempt can rebind the same
-producer's saved bytes after the original attempt is definitively rejected.
-An observed terminal native job can settle an unfetched local claim, but cannot
-discard an unacknowledged page or failure intent.
-
-Schema 10 → 11 adds only the discovery journal and its guards/index. Promotion
-preserves prior outbox tables, staged enrichment bytes and receipt history in
-one transaction. Unknown table collisions roll back. Older producer code
-refuses schema 11; include the outbox and its pending page bodies in coordinated
-backups. This does not change the native Stash schema or activate any worker.
-
-### Selected discovery page execution
-
-`discovery_worker.execute(outbox, client, profile, job_uuid)` executes or recovers
-one already-admitted page job. A discovery profile uses
-`schema: "stash-gallery-discovery-v1"`, `source_category` set to `reddit` or
-`twitter`, and the same `gallery` and private `bindings` structure as metadata
-enrichment profiles. Its policy hash explicitly binds `account.list_page` and
-cannot substitute for a `post.enrich` policy. Existing enrichment hashes remain
-unchanged. Website access values stay local; delivery of a saved page requires
-only the native producer API token.
-
-The CLI accepts the usual `--outbox`, `--endpoint`, `--producer` and `--token-env`
-arguments:
-
-| Command | Effect |
-| --- | --- |
-| `discovery-policy --profile PATH` | Validate an account-listing profile and print its portable policy hash and pinned runtime |
-| `execute-discovery JOB_UUID --profile PATH` | Deliver saved work first, then claim/fetch one page if its original listing and reviewed profile still match |
-| `deliver-discovery JOB_UUID` | Replay saved page/failure intents without loading a website profile or claiming another attempt |
-| `discovery-status [--job JOB_UUID]` | Inspect local delivery phases, retained bytes, pending intent and page receipt |
-
-Execution reserves local capacity before source access, passes lease and source
-reservation checks into the isolated collector, and persists its result before
-checking potentially expired ownership. A lost claim reuses its recorded owner.
-Delivery after an expired attempt first tries the original receipt; new ownership
-may reuse the exact same page bytes for this producer and job. A conflicting
-later completion leaves unacknowledged data in review. Capacity exhaustion ends
-the claimed attempt with a controlled failure before fetching source data.
-
-Execution/delivery exit 0 only for `page_delivered`, 2 for waiting, retry, capacity,
-review or failed outcomes, and 1 for invalid input or an exception. The receipt's
-`complete` flag distinguishes a final page from a nonfinal one. Neither a delivered
-page nor completed enumeration establishes a candidate match or completed catalog
-import. `status` now includes the discovery journal's retained work.
-
-Reviewed activation, candidate matching and verified native page release remain
-required. These commands do not
-create listing definitions or activate imported accounts. Existing production
-workers and host/n8n launchers have not switched to native discovery.
-
-### Discovery dispatch across existing listings
-
-```sh
-stash-ingest --outbox /state/outbox.sqlite --endpoint https://stash.example \
-  --producer PRODUCER_UUID dispatch-discovery --collection COLLECTION_UUID \
-  --profile /worker/reddit-discovery.json
-```
-
-Each invocation first replays saved page/failure delivery for that collection,
-including evidence fetched with an older profile. It then resumes local owned
-work, discovers due admitted jobs, and finally admits one eligible existing
-listing by its pinned definition hash. Original page receipts remain the only
-acknowledgement of delivered observations. A matching profile can reclaim the
-same producer's expired pending page; a different profile leaves it waiting for
-the original one. Without `--profile`, this command only attempts saved delivery
-and never claims a lease or contacts a source website.
-
-Schema 12 persists independent delivery, local recovery, job and listing cursors
-per collection/policy, plus revision-checked changes and retry/idle delays. The
-dispatcher inspects at most 20 candidates per traversal, follows empty filtered
-pages and wraps admitted-job traversal before considering fresh admission.
-Contention on an existing claim must not fill the queue with additional jobs.
-Lost admission responses are recovered through the ready-job index. Saved
-selection and backoff survive process restart; failed polls use 5–320 second
-exponential delays, honoring longer server delays up to one day. Idle traversal
-waits 30 seconds. No loop inside the command continuously polls a website.
-
-Exit 0 means `page_delivered` or `idle`; neither proves all listings completed,
-candidate matches were accepted, or catalog import finished. Inspect the page
-receipt's `complete` flag and `discovery-status` separately. Other pending/review/
-retry outcomes return 2, and invalid command input returns 1. Use `dispatch-all`
-for rotation across local profiles and permitted collections. Production host/n8n
-activation remains separate transition work.
-
-Promotion from schema 11 adds only the dispatch table; exact pending pages,
-claims, receipts and every previous outbox table are preserved transactionally.
-Unknown name collisions roll back without replacing evidence. Schema-11 producer
-code refuses schema 12, so include the outbox in coordinated backups and preserve
-it during rollback. Native Stash schema 1000071 is unchanged.
 
 ## Validation
 
@@ -3540,151 +2544,6 @@ The Python tests run in this repository's independent release workflow. The
 Go/HTTP checks remain in the Stash repository's explicit `make test-clients`
 suite, pinned by `integration-clients.json`; core CI selects them for contract
 changes. No production endpoint or source website is contacted.
-`TestPythonDiscoveryHTTPPreservesLargePagesAndLostAcknowledgements` also runs the
-supported discovery client and shared job lease against the native server,
-preserving a page larger than 4 MiB, exact source numbers and compact metadata.
-Lost admission, claim, page and failure responses replay without duplicate
-attempts. The local journal reopens between claim/delivery attempts and releases
-staged bytes only with the checked native receipt. The fixture checks lease
-renewal and source reservation, the next page's original cursor and the first
-page's receipt after the next job fails. Retaining
-a nonfinal page does not mark enumeration complete or publish native post matches.
-`TestPythonDiscoveryExecutionRecoversOwnedPagesWithoutRefetch` runs the selected
-worker through separate Python processes against the native API. Ten scenarios
-cover lost claims/pages/failures, expired ownership, pause after extraction,
-capacity, rejected pages, a later attempt's completion, empty final pages and a
-changed policy. Delivery-only CLI recovery has no website profile and preserves
-the original source numbers without refetching. Private access values never
-enter the outbox or command output.
-`TestPythonDiscoveryDispatchResumesWithoutRepeatingPages` starts a separate
-producer process for each cycle against native HTTP. Lost admission and page
-acknowledgements, delivery-only CLI recovery and filtered readiness pages reach
-the original final cursor with exactly two page fetches and one native attempt
-per page. Its global-profile scenario uses the actual `dispatch-all` CLI and a
-root grant issued before a later collection registration; both listings finish
-without duplicate fetches or new local configuration. Producer migration tests
-compare retained tables and exact pending bodies across schema 11 → 12 and
-12 → 13, and reject table/column collisions without changing their data. Shared
-worker tests exercise all three busy operations across restarts, independently
-recover both delivery journals without website profiles, and retain a completed
-delivery receipt when another process advances the dispatch revision.
-
-### Candidate detail worker
-
-A detail worker fetches one inferred Reddit or Twitter post URL and saves a
-comparison with the original catalog/listing evidence. Its result can be
-`corroborated` or `uncorroborated`. The comparison receipt itself does not publish
-metadata or accept identity. Stash's publication worker can subsequently use a
-corroborated result once listing coverage, uniqueness and native-edit checks pass.
-Review retains the original weak candidate and exposes its latest result. Listing
-discovery and post enrichment have separate profiles and receipts.
-
-Use a detail profile for the candidate's service:
-
-```json
-{
-  "schema": "stash-gallery-discovery-detail-v1",
-  "source_category": "reddit",
-  "gallery": {"extractor": {"sleep-request": 5}},
-  "bindings": {}
-}
-```
-
-`source_category` supports `reddit` and `twitter` for the implemented candidate
-policy. Website access uses the same producer-local bindings as other metadata
-profiles. The policy hash includes the detail operation, runtime and reviewed
-settings; an enrichment or account-listing profile cannot replace it. The
-collector does not create media download writers, update cookies or write a
-gallery-dl archive. Successful empty responses are retained as negative detail
-evidence; authentication, missing-source and network failures remain failures.
-
-Use the usual `--outbox`, `--endpoint` and `--producer` arguments with these
-commands:
-
-| Command | Behavior |
-| --- | --- |
-| `detail-policy --profile PATH` | Validate a detail profile and print its policy/runtime |
-| `admit-detail TARGET_UUID --revision N --candidate SEQUENCE --profile PATH` | Pin one selected candidate and target revision to this detail policy |
-| `execute-detail JOB_UUID --profile PATH` | Claim, fetch or resume a selected job and deliver its comparison |
-| `deliver-detail JOB_UUID` | Recover saved checkpoint/completion/failure intents without website access |
-| `detail-status [--job JOB_UUID]` | Inspect local pending evidence and retained `comparison` receipts |
-| `retry-detail JOB_UUID` | Explicitly create or recover the next generation of a failed/cancelled job, retaining its original selection and retry delay |
-| `dispatch-detail --collection UUID [--profile PATH]` | Resume saved work and admit eligible candidates through the selected profile; omitting the profile permits delivery only |
-
-Target UUID, revision and candidate sequence come from native candidate review.
-Repeating identical admission returns its original job. Changing the profile or
-selection does not reinterpret an existing job. The dispatcher admits a new weak
-candidate only after complete retained listing comparison and current review
-identify exactly one candidate with no other blocker. Any existing detail-job
-history for that target/candidate prevents automatic readmission, including
-older target revisions, negative results and terminal jobs. Use explicit review
-and, for failed/cancelled work, `retry-detail` to resolve those cases.
-
-Add a `post.verify_candidate` entry to the shared worker list to discover
-permitted collections with retained listings. Automatic dispatch requires
-`discovery_detail_admission_protocol: 1`, in addition to the detail execution
-capability. Collection inspection includes blocked containers; readiness still
-depends on the selected profile, current source choices and native review.
-Candidate requests inspect at most 32 listing definitions and 32 targets,
-advancing over empty or blocked rows. The producer checks profile URL support;
-the server rechecks automatic eligibility when admitting and committing the job.
-Saved delivery runs before profile loading, existing jobs run before new
-admission, and collection/profile selections persist before execution. A lost
-admission reply is recovered through queued-job discovery. Completed collection
-traversals pause before polling again, including passes spanning multiple pages.
-
-Outbox schema 14 stores detail evidence in `discovery_detail_executions`, separate
-from enrichment and listing journals. A full checkpoint's capacity is reserved
-before source access; events and all three metadata journals share one byte
-budget. Checkpoint acknowledgement removes local source bytes only while staging
-the exact completion or child-failure intent in the same transaction. The native
-server retains the original observing producer and time for every record.
-A lost completion reply recovers the same comparison receipt. Unacknowledged
-local evidence stays available for review if a native job changes or ends.
-
-Include the producer outbox in backups. Schema 15 adds a persisted candidate
-cursor to the schema-14 detail dispatcher while preserving every existing table,
-pending body, claim, receipt, retry deadline and rotation cursor. Conflicting
-schema objects roll back the upgrade. Native archive schema 77 already contains
-the required jobs, evidence and indexes; automatic admission requires no new
-native migration. Production launcher conversion remains a cutover step.
-
-### Review a discovery search after a collection change
-
-`stash-review-discovery-collections` prepares an application review when a saved
-search's collection acquires a new root or directory association. It preserves
-the original definition, cursor, retry deadline, targets and recovery links.
-Searches with any native worker-job history or an existing replacement need their
-existing recovery workflow; this command does not transfer their running state.
-
-List bounded candidates using an application API key:
-
-```sh
-stash-review-discovery-collections candidates --endpoint "$STASH_ENDPOINT" \
-  --collection "$COLLECTION_UUID" --revision "$COLLECTION_REVISION"
-```
-
-Use `--after` with the returned UUID cursor to continue. Save the chosen
-`listing_uuid`, its current `expected_definition_sha256`, the new
-`collection_revision` and a `reason` in a JSON input file. An omitted operation
-`uuid` is generated once during preparation:
-
-```sh
-stash-review-discovery-collections prepare --endpoint "$STASH_ENDPOINT" \
-  --input selection.json --output reviewed-search.json
-stash-review-discovery-collections show --plan reviewed-search.json \
-  --expected-sha256 "$SAVED_PLAN_SHA256"
-stash-review-discovery-collections apply --endpoint "$STASH_ENDPOINT" \
-  --plan reviewed-search.json --expected-sha256 "$SAVED_PLAN_SHA256"
-```
-
-Use the file digest printed by `prepare` as `SAVED_PLAN_SHA256`. Plans are private,
-created without overwriting an existing file, pinned to the endpoint, and checked
-again immediately before use. `status` takes the same arguments as `apply` and
-reads only the receipt. After interruption, reuse the same file and digest;
-`apply` checks for a committed receipt before sending anything again. A 409
-requires review of the changed state. Successful review does not enable a root,
-issue credentials, admit a source job or claim that scraping completed.
 
 ## Tumblr and gallery file sources
 

@@ -19,6 +19,14 @@ from stash_archive.cli import main
 from stash_archive.receipts import verify_ingestion_receipts
 from stash_archive.storage import InvalidArchive
 
+
+def retain_discovery_journals(db):
+    """Producer schemas 11 to 25 kept empty discovery journals; schema 26 drops them."""
+    for table in ("discovery_executions", "discovery_detail_executions"):
+        db.execute(f"""CREATE TABLE IF NOT EXISTS {table}(job_uuid TEXT PRIMARY KEY, revision INTEGER,
+            phase TEXT, definition BLOB, definition_sha256 TEXT, state BLOB, state_sha256 TEXT,
+            body BLOB, body_sha256 TEXT, reserved_bytes INTEGER NOT NULL DEFAULT 0)""")
+
 ROOT = Path(os.environ.get("STASH_SOURCE_ROOT", Path(__file__).resolve().parents[3]))
 PRODUCER, COLLECTION, MEDIA_ROOT, RUN, CREDENTIAL = [str(uuid.uuid4()) for _ in range(5)]
 ORIGIN = "https://stash.example"
@@ -218,7 +226,7 @@ class ReceiptBoundaryTests(ReceiptFixture):
         with self.assertRaisesRegex(InvalidArchive, "identity is missing"): self.verify()
 
     def test_future_outbox_version_and_writable_transaction_refused(self):
-        self.box.db.execute("PRAGMA user_version=26")
+        self.box.db.execute("PRAGMA user_version=27")
         with self.assertRaisesRegex(InvalidArchive, "Unsupported producer"): self.verify()
         self.db.execute("BEGIN")
         try:

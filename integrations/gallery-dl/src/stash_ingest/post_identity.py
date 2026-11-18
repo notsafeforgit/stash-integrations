@@ -1,7 +1,6 @@
 """Validate the application identity context before preparing new source work."""
 
-from .catalog_source import source_time
-from .encoding import InvalidData, identifier
+from .encoding import InvalidData, identifier, source_time
 
 
 def current_post(value, post):

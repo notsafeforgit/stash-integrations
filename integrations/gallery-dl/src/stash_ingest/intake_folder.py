@@ -9,7 +9,7 @@ import sys
 import time
 
 from .album_client import integer
-from .catalog_upload import read_regular
+from .filesystem import read_regular
 from .client import Unavailable, stash_unavailable
 from .dedupe import exclusive_lock, private_directory
 from .dedupe_host import absolute
