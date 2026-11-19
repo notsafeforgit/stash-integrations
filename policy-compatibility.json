@@ -2,7 +2,7 @@
   "schema": "stash-worker-compatibility-review-v1",
   "capture_contract": "stash-gallery-v1",
   "execution_contract": "stash-worker-execution-v10",
-  "implementation_sha256": "5c93280f2b0addd1ab6f9593aa97f49dbef672f2c0945b40473cd64c988f5b1f",
+  "implementation_sha256": "80b74534d710ffda10fe42a60b800b2c6a9c57d7858cc2c4eddac713aa827f40",
   "decision": "compatible",
-  "reason": "Release 0.6.51 removes the discovery account-listing and candidate-detail operations, their dispatch and journals, and checkpoint handoff admission, which native schema 1000142 retires. Download and post.enrich admissions, coverage, cursors, captures and retained outputs are unchanged, so queued work keeps its meaning; profiles naming the removed operations are rejected. Execution v10 and capture v1 are unchanged."
+  "reason": "Release 0.6.52 adds an optional \"background\" flag to post.enrich dispatch entries. Such a worker claims with background: true after the server reports enrichment_background_protocol 1, and never registers turn interest; other entries and claims are unchanged. Admission, coverage, cursors, checkpoints, captures and retained outputs keep their meaning, and producer schema 26, execution v10 and capture v1 are unchanged."
 }

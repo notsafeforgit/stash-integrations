@@ -240,3 +240,10 @@ active, in review, or holds local bytes. Execution contract v10 and capture v1 a
 unchanged. Deploy the Stash server, the native archive reader and every
 shared-outbox client together with writers stopped; the migration is explicit and
 transactional.
+
+Release v0.6.52 lets a `post.enrich` dispatch entry set `"background": true` for
+a metadata-only worker. Its claims use Stash's background metadata (native
+schema 1000143, capability `enrichment_background_protocol: 1`): spare request
+capacity beside downloads other workers run, without waiting for a metadata
+turn. Producer outbox schema 26, execution contract v10 and capture v1 are
+unchanged, so other clients can stay on v0.6.51.

@@ -32,9 +32,12 @@ class EnrichmentDispatcher:
     protocol = "enrichment_dispatch_protocol"
     cursor_fields = ("delivery_after", "local_after", "job_after", "target_cursor")
 
-    def __init__(self, box, transport, collection, configuration=None):
+    def __init__(self, box, transport, collection, configuration=None, *, background=False):
         if (box.endpoint, box.producer) != (transport.endpoint, transport.producer):
             raise Conflict("Enrichment dispatcher and outbox identify different producers")
+        if type(background) is not bool:
+            raise InvalidData("Invalid background metadata selection")
+        self.background = background
         policy = configuration.policy_sha256 if configuration else DELIVERY_POLICY
         if not sha256(policy):
             raise InvalidData("Enrichment dispatch requires a reviewed policy")
@@ -94,7 +97,10 @@ class EnrichmentDispatcher:
                 "next_attempt_at": state["available_at"]}
 
     def _execute(self, state, job, configuration):
-        result = execute(self.box, self.transport, configuration, job)
+        if self.background:
+            result = execute(self.box, self.transport, configuration, job, background=True)
+        else:
+            result = execute(self.box, self.transport, configuration, job)
         if result["state"] == "delivery_pending":
             result["dispatch"] = self.unavailable(state, Unavailable("native_delivery_unavailable"))
         elif not self.save(state, failures=0, available_at=0, error_code=None):

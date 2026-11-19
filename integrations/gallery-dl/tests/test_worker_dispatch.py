@@ -87,6 +87,22 @@ class WorkerDispatchTests(unittest.TestCase):
                 with self.assertRaises(InvalidData):
                     Profiles(self.profile_path)
 
+    def test_background_metadata_profile_reaches_its_collection_dispatch(self):
+        self.document["profiles"] = [{"id": "metadata", "operation": "post.enrich", "profile": "metadata.json", "background": True}]
+        self.profile_path.write_bytes(encode(self.document))
+        with (patch("stash_ingest.worker_dispatch.EnrichmentConfiguration"),
+              patch("stash_ingest.worker_dispatch.CollectionDispatcher") as metadata, closing(self.open()) as box):
+            metadata.return_value.once.return_value = {"state": "completed"}
+            WorkerDispatcher(box, self.transport, Profiles(self.profile_path)).once()
+            self.assertIs(metadata.call_args.kwargs["background"], True)
+            WorkerDispatcher(box, self.transport, self.profiles).once()
+            self.assertIs(metadata.call_args.kwargs["background"], False, "ordinary metadata profiles keep their turns")
+        for entry in ({"id": "d", "operation": "download", "profile": "d.json", "background": True},
+                      {"id": "m", "operation": "post.enrich", "profile": "m.json", "background": 1}):
+            self.profile_path.write_bytes(encode({**self.document, "profiles": [entry]}))
+            with self.subTest(entry=entry), self.assertRaises(InvalidData):
+                Profiles(self.profile_path)
+
     def test_profile_list_is_bounded_unique_and_paths_are_local(self):
         self.assertEqual(self.profiles.entries[0]["profile"], self.directory / "download.json")
         self.assertFalse((self.directory / "download.json").exists(), "loading the list does not load website settings")
@@ -239,6 +255,19 @@ class CollectionDispatchTests(unittest.TestCase):
             self.assertEqual(self.dispatcher(box, self.transport, self.profile).once()["state"], "waiting")
         with closing(self.open()) as box:
             self.assertEqual(self.dispatcher(box, self.transport, self.profile).once()["collection_uuid"], self.ids[0])
+
+    def test_background_dispatch_requires_server_support(self):
+        with closing(self.open()) as box:
+            result = self.dispatcher(box, self.transport, self.profile, background=True).once()
+        self.assertEqual(result["error_code"], "native_background_metadata_unavailable")
+        self.selected.assert_not_called()
+        self.capabilities.return_value = {"enrichment_collections_protocol": 1, "enrichment_background_protocol": 1}
+        self.now += 10
+        with closing(self.open()) as box:
+            self.assertEqual(self.dispatcher(box, self.transport, self.profile, background=True).once()["collection_uuid"], self.ids[0])
+        self.assertIs(self.selected.call_args.kwargs["background"], True)
+        with self.assertRaises(InvalidData), closing(self.open()) as box:
+            self.dispatcher(box, self.transport, self.profile, background="yes")
 
     def test_blocked_collection_does_not_prevent_a_peer_from_running(self):
         self.selected.return_value.once.side_effect = [{"state": "waiting"}, {"state": "completed"}]

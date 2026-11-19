@@ -205,6 +205,20 @@ class EnrichmentClientTests(unittest.TestCase):
             with self.assertRaises(InvalidData):
                 self.client.claim(self.job, self.owner, seconds)
 
+    def test_background_claim_is_explicit_and_reaches_the_request(self):
+        running = dict(self.job, state="running", owner_uuid=self.owner, revision=2, fence=1)
+        self.transport._request.return_value = (running, "date", 100)
+        self.client.claim(self.job, self.owner)
+        self.assertNotIn("background", decode(self.transport._request.call_args.args[2]))
+        self.client.claim(self.job, self.owner, background=True)
+        self.assertIs(decode(self.transport._request.call_args.args[2])["background"], True)
+        with self.assertRaises(InvalidData):
+            self.client.claim(self.job, self.owner, background=1)
+        client = Mock()
+        client.claim.return_value = (None, "date", 100)
+        self.assertIsNone(JobLease.claim(client, self.job, owner=self.owner, background=True))
+        client.claim.assert_called_once_with(self.job, self.owner, 180, background=True)
+
     def test_approved_repair_claims_new_policy_and_rejects_renewal_policy_changes(self):
         self.job["execution_policy_sha256"] = "b" * 64
         original = deepcopy(self.job["arguments"])

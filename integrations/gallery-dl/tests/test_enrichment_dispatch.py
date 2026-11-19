@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import uuid
 
 from stash_ingest.client import Unavailable
-from stash_ingest.encoding import decode
+from stash_ingest.encoding import InvalidData, decode
 from stash_ingest.enrichment_client import EnrichmentClient
 from stash_ingest.enrichment_dispatch import EnrichmentDispatcher, PAGE_SIZE
 from stash_ingest.enrichment_journal import EnrichmentJournal
@@ -122,6 +122,15 @@ class EnrichmentDispatchTests(unittest.TestCase):
             self.assertEqual(EnrichmentJournal(box).find(value.job_uuid).body, value.body)
         self.native_ready.assert_not_called()
         self.targets.assert_not_called()
+
+    def test_background_dispatch_claims_queued_work_in_background(self):
+        job = str(uuid.uuid4())
+        self.native_ready.return_value = [{"sequence": 1, "uuid": job}]
+        with closing(self.open()) as box:
+            EnrichmentDispatcher(box, self.transport, self.collection, self.profile, background=True).once()
+            self.executor.assert_called_once_with(box, self.transport, self.profile, job, background=True)
+            with self.assertRaises(InvalidData):
+                EnrichmentDispatcher(box, self.transport, self.collection, self.profile, background=None)
 
     def test_blocked_admitted_work_does_not_admit_more_targets(self):
         self.native_ready.return_value = [{"sequence": 1, "uuid": str(uuid.uuid4())}]

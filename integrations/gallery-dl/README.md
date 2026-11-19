@@ -2402,6 +2402,15 @@ the list. Each entry's `operation` is `download` or `post.enrich`, and it uses
 that operation's profile contract; website access stays local, and the list does
 not confer native source permissions or enable unsupported extractors.
 
+A `post.enrich` entry may set `"background": true`. Its claims never wait for a
+metadata turn: Stash grants a free turn when the service is idle, or a background
+attempt beside a download already running there, whose requests yield to
+downloads (see Stash's background metadata contract; the server must report
+`enrichment_background_protocol: 1`). Use it only in a separate metadata-only
+worker, because a worker that also downloads would spend its own download time
+on it. An outbox executes one metadata job at a time, so choose an outbox whose
+other workers do not run metadata, or they will wait for the background job.
+
 One invocation delivers an ordinary event batch, advances a backfill call,
 resolves a caller page and submits one source request. It then tries one saved
 enrichment delivery before loading any website profile, and rotates through the

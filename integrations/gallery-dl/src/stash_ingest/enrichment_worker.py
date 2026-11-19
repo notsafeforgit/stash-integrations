@@ -48,9 +48,14 @@ def _result(journal, job, state):
     return {"state": state, "job_uuid": job, "execution": journal.summary(job)}
 
 
-def execute(box, transport, configuration, job_uuid, *, fetcher=fetch):
-    """configuration=None delivers persisted intents but never claims/fetches."""
+def execute(box, transport, configuration, job_uuid, *, fetcher=fetch, background=False):
+    """configuration=None delivers persisted intents but never claims/fetches.
+
+    background=True asks Stash for a background claim, which uses spare
+    request capacity beside running downloads and never waits for a turn."""
     identifier(job_uuid)
+    if type(background) is not bool:
+        raise InvalidData("Invalid background metadata selection")
     if (box.endpoint, box.producer) != (transport.endpoint, transport.producer):
         raise Conflict("Enrichment client and outbox identify different producers")
     journal, client = EnrichmentJournal(box), EnrichmentClient(transport)
@@ -114,7 +119,7 @@ def execute(box, transport, configuration, job_uuid, *, fetcher=fetch):
                 return _result(journal, job_uuid, "waiting")
             value = journal.claim(value, job)
             claim = value.state["claim"]
-            lease = JobLease.claim(client, claim["job"], owner=claim["owner_uuid"], seconds=180)
+            lease = JobLease.claim(client, claim["job"], owner=claim["owner_uuid"], seconds=180, background=background)
             if lease is None:
                 return _result(journal, job_uuid, "waiting")
             value = journal.claimed(value, lease.job)

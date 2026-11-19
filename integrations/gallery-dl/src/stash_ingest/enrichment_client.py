@@ -239,13 +239,18 @@ class EnrichmentClient:
         if type(seconds) is not int or not 5 <= seconds <= 900:
             raise InvalidData("Invalid enrichment lease duration")
 
-    def claim(self, job, owner, seconds=180):
+    def claim(self, job, owner, seconds=180, *, background=False):
         work = self._job(job)
         self._seconds(seconds)
-        response = self.client._request("POST", self.path(job["uuid"], "/claim"), encode({
-            "expected_revision": job["revision"], "owner_uuid": identifier(owner),
-            "policy_sha256": execution_policy(job, work["policy_sha256"]), "extractor_version": work["extractor_version"],
-            "lease_seconds": seconds}), timed=True, allow_empty=True)
+        if type(background) is not bool:
+            raise InvalidData("Invalid background metadata claim")
+        body = {"expected_revision": job["revision"], "owner_uuid": identifier(owner),
+                "policy_sha256": execution_policy(job, work["policy_sha256"]), "extractor_version": work["extractor_version"],
+                "lease_seconds": seconds}
+        if background:
+            # Older servers reject the field; dispatch checks the capability first.
+            body["background"] = True
+        response = self.client._request("POST", self.path(job["uuid"], "/claim"), encode(body), timed=True, allow_empty=True)
         if response[0] is not None:
             self._running(response[0], job, owner)
             expected_fence = job["fence"] if job["state"] == "running" else job["fence"] + 1

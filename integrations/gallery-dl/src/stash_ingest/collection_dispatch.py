@@ -35,12 +35,15 @@ class CollectionDispatcher:
         return [rows[key] for key in sorted(rows)[:PAGE_SIZE]]
 
     def selected(self, collection):
-        return EnrichmentDispatcher(self.box, self.transport, collection, self.configuration).once()
+        return EnrichmentDispatcher(self.box, self.transport, collection, self.configuration,
+                                    background=self.background).once()
 
-    def __init__(self, box, transport, configuration):
+    def __init__(self, box, transport, configuration, *, background=False):
         if (box.endpoint, box.producer) != (transport.endpoint, transport.producer):
             raise Conflict("Collection dispatcher and outbox identify different producers")
-        self.box, self.transport, self.configuration = box, transport, configuration
+        if type(background) is not bool:
+            raise InvalidData("Invalid background metadata selection")
+        self.box, self.transport, self.configuration, self.background = box, transport, configuration, background
         self.client, self.policy = EnrichmentClient(transport), configuration.policy_sha256
         if not sha256(self.policy):
             raise InvalidData("Collection discovery requires a reviewed policy")
@@ -79,6 +82,8 @@ class CollectionDispatcher:
             capabilities = self.client.capabilities()
             if type(capabilities.get(self.protocol)) is not int or capabilities[self.protocol] != 1:
                 raise Unavailable(self.protocol_error)
+            if self.background and capabilities.get("enrichment_background_protocol") != 1:
+                raise Unavailable("native_background_metadata_unavailable")
             previous = state["after_collection"]
             page = self.ready(previous)
             waiting = False

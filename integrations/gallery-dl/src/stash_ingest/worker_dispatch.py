@@ -32,8 +32,10 @@ class Profiles:
         seen = set()
         for entry in value["profiles"]:
             if (not isinstance(entry, dict) or not {"id", "operation", "profile"} <= set(entry)
-                    or set(entry) - {"id", "operation", "profile", "priority"}
+                    or set(entry) - {"id", "operation", "profile", "priority", "background"}
                     or type(entry.get('priority', 0)) is not int or not 0 <= entry.get('priority', 0) <= 2
+                    or type(entry.get('background', False)) is not bool
+                    or (entry.get('background', False) and entry.get('operation') != 'post.enrich')
                     or not isinstance(entry["id"], str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", entry["id"])
                     or entry["id"] in seen or entry["operation"] not in ("download", "post.enrich")):
                 raise InvalidData("Invalid or repeated worker profile entry")
@@ -108,7 +110,11 @@ class WorkerDispatcher:
                 if entry["operation"] == "download":
                     result = ProfileDispatcher(self.box, self.transport, entry["profile"]).once()
                 else:
-                    result = CollectionDispatcher(self.box, self.transport, EnrichmentConfiguration(entry["profile"])).once()
+                    # A background profile belongs in a metadata-only worker: it
+                    # uses spare request capacity beside downloads other
+                    # workers run, and never waits for a metadata turn.
+                    result = CollectionDispatcher(self.box, self.transport, EnrichmentConfiguration(entry["profile"]),
+                                                  background=entry.get("background", False)).once()
             except DispatchCapacity as error:
                 result = error.result()
             except Capacity:

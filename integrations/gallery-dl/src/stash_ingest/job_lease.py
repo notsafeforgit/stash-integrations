@@ -19,9 +19,9 @@ class JobLease:
         self.lock, self.stop, self.thread = threading.RLock(), threading.Event(), None
 
     @classmethod
-    def claim(cls, client, job, *, owner=None, seconds=180):
+    def claim(cls, client, job, *, owner=None, seconds=180, background=False):
         lease = cls(client, owner or str(uuid.uuid4()), seconds)
-        response = client.claim(job, lease.owner, seconds)
+        response = client.claim(job, lease.owner, seconds, background=background) if background else client.claim(job, lease.owner, seconds)
         if response[0] is None:
             return None
         lease._accept(response)
