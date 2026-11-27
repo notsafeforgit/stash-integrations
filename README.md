@@ -247,3 +247,11 @@ schema 1000143, capability `enrichment_background_protocol: 1`): spare request
 capacity beside downloads other workers run, without waiting for a metadata
 turn. Producer outbox schema 26, execution contract v10 and capture v1 are
 unchanged, so other clients can stay on v0.6.51.
+
+Release v0.6.53 changes only the native archive's host ZFS media views. A failed
+ZFS command now reports ZFS's own error text, and releasing or abandoning a
+retained snapshot retries a destroy that ZFS refused, over about five minutes:
+a snapshot automounted for reading can stay busy briefly after its reader exits.
+A destroy that timed out is not repeated, since it may still be running. Foreign
+holds and clones still block release. Producer outbox schema 26, execution
+contract v10 and capture v1 are unchanged, so workers can stay on v0.6.52.

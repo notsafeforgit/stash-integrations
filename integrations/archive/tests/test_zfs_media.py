@@ -9,7 +9,8 @@ from unittest.mock import patch
 import uuid
 
 from stash_archive.storage import InvalidArchive, publish_bytes
-from stash_archive.zfs_media import PROPERTY, ZFSMedia, release_published_media
+from stash_archive.zfs_media import (DESTROY_RETRY_DELAYS, PROPERTY, ZFSCommandError, ZFSMedia,
+                                     release_published_media)
 
 
 class FakeZFS:
@@ -184,3 +185,67 @@ class ZFSMediaTests(unittest.TestCase):
         self.provider.run = lambda *_args, **_kwargs: (_ for _ in ()).throw(InvalidArchive("device unavailable"))
         with self.assertRaisesRegex(InvalidArchive, "device unavailable"): self.release(boundary)
         self.assertFalse((view.path / "released.json").exists())
+
+
+class ZFSCommandFailureTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "cache").mkdir(mode=0o700)
+        (self.root / "dataset").mkdir()
+        self.snapshot = "tank/media@stash-native-test"
+
+    def provider(self, script):
+        command = self.root / "zfs"
+        command.write_text("#!/bin/sh\n" + script)
+        command.chmod(0o700)
+        return ZFSMedia(self.root / "cache", "tank/media", "123", self.root / "dataset", command=(str(command),), reserve=0)
+
+    def test_failure_reports_what_zfs_said(self):
+        provider = self.provider("echo \"cannot destroy '$2': dataset is busy\" >&2\nexit 1\n")
+        with self.assertRaises(ZFSCommandError) as caught:
+            provider.run("destroy", self.snapshot)
+        self.assertEqual((caught.exception.action, caught.exception.returncode), ("destroy", 1))
+        self.assertEqual(str(caught.exception),
+                         f"ZFS destroy failed (exit 1): cannot destroy '{self.snapshot}': dataset is busy")
+
+    def test_failure_without_explanation_keeps_the_exit_status(self):
+        with self.assertRaises(ZFSCommandError) as caught:
+            self.provider("exit 2\n").run("destroy", self.snapshot)
+        self.assertEqual(str(caught.exception), "ZFS destroy failed (exit 2)")
+
+    def test_destroy_waits_out_a_busy_snapshot(self):
+        provider = self.provider("exit 0\n")
+        attempts, slept = [], []
+
+        def busy_twice(*args, **_):
+            attempts.append(args)
+            if len(attempts) <= 2:
+                raise ZFSCommandError("destroy", 1, f"cannot destroy '{self.snapshot}': dataset is busy\n")
+            return ""
+        provider.run = busy_twice
+        with self.assertLogs("stash_archive.zfs_media", "WARNING") as logs:
+            provider.destroy(self.snapshot, sleep=slept.append)
+        self.assertEqual(attempts, [("destroy", self.snapshot)] * 3)
+        self.assertEqual(slept, list(DESTROY_RETRY_DELAYS[:2]))
+        self.assertIn("dataset is busy; retrying in 10 s", logs.output[0])
+
+    def test_destroy_gives_up_with_the_last_zfs_error(self):
+        provider = self.provider("echo 'dataset is busy' >&2\nexit 1\n")
+        slept = []
+        with self.assertLogs("stash_archive.zfs_media", "WARNING"), self.assertRaises(ZFSCommandError) as caught:
+            provider.destroy(self.snapshot, sleep=slept.append)
+        self.assertEqual(slept, list(DESTROY_RETRY_DELAYS))
+        self.assertIn("dataset is busy", str(caught.exception))
+
+    def test_destroy_that_did_not_complete_is_not_repeated(self):
+        provider = self.provider("exit 0\n")
+        slept = []
+
+        def timed_out(*args, **_):
+            raise InvalidArchive("ZFS destroy did not complete")
+        provider.run = timed_out
+        with self.assertRaisesRegex(InvalidArchive, "did not complete"):
+            provider.destroy(self.snapshot, sleep=slept.append)
+        self.assertEqual(slept, [])

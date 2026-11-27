@@ -211,8 +211,7 @@ def abandon_media(provider, ready, receipt):
         retain(path / "abandoning.json", retirement)
         if intent["hold"] in holds:
             provider.run("release", intent["hold"], intent["snapshot"])
-        # No force, recursion or deferred destruction. Foreign clones block.
-        provider.run("destroy", intent["snapshot"])
+        provider.destroy(intent["snapshot"])
     retain(path / "abandoned.json", receipt)
 
 

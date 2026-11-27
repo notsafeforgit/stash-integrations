@@ -9,6 +9,7 @@ owns release; neither capture nor export deletes a retained snapshot on failure.
 import base64
 from datetime import datetime, timezone
 import hashlib
+import logging
 import os
 from pathlib import Path
 import re
@@ -24,6 +25,18 @@ FORMAT = "org.notsafeforgit.stash.zfs-media"
 PROPERTY = "org.notsafeforgit.stash:"
 DATASET = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]*(?:/[A-Za-z0-9_.:-]+)*\Z")
 MAX_RECORD = 8192
+# A snapshot ZFS automounted for reading can stay busy for a moment after the
+# reader exits, so a failed destroy is retried over about five minutes.
+DESTROY_RETRY_DELAYS = (10, 20, 40, 80, 160)
+LOG = logging.getLogger(__name__)
+
+
+class ZFSCommandError(InvalidArchive):
+    """ZFS ran and reported a failure; the message carries its own explanation."""
+    def __init__(self, action, returncode, stderr):
+        self.action, self.returncode = action, returncode
+        self.detail = " ".join((stderr or "").split())[:1000]
+        super().__init__(f"ZFS {action} failed (exit {returncode})" + (f": {self.detail}" if self.detail else ""))
 
 
 def number(value):
@@ -78,8 +91,22 @@ class ZFSMedia:
         except (OSError, subprocess.TimeoutExpired) as error:
             raise InvalidArchive(f"ZFS {args[0]} did not complete") from error
         if result.returncode:
-            raise InvalidArchive(f"ZFS {args[0]} failed (exit {result.returncode})")
+            raise ZFSCommandError(args[0], result.returncode, result.stderr)
         return result.stdout
+
+    def destroy(self, snapshot, *, sleep=time.sleep):
+        """Never recursive, forced or deferred: foreign holds and clones still fail.
+
+        A command that timed out is not retried, because it may still be running.
+        """
+        for delay in (*DESTROY_RETRY_DELAYS, None):
+            try:
+                return self.run("destroy", snapshot)
+            except ZFSCommandError as error:
+                if delay is None:
+                    raise
+                LOG.warning("%s; retrying in %d s", error, delay)
+                sleep(delay)
 
     def topology(self, deadline=None):
         output = self.run("list", "-H", "-p", "-r", "-t", "filesystem,volume", "-o",
@@ -261,8 +288,7 @@ def release_published_media(source, client, provider):
             publish_bytes(intent, body)
         if view.record["hold"] in provider.holds(view.record["snapshot"]):
             provider.run("release", view.record["hold"], view.record["snapshot"])
-        # Never recursive, forced or deferred: foreign holds/clones must block.
         view.verify(releasing=True)
-        provider.run("destroy", view.record["snapshot"])
+        provider.destroy(view.record["snapshot"])
     publish_bytes(complete, body)
     return release
